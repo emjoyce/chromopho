@@ -1,0 +1,10 @@
+Metadata-Version: 2.1
+Name: chromopho
+Version: 0.0.1
+Summary: a simulation of bipolar subtypes as color filters
+Home-page: https://github.com/emjoyce/chromopho.git
+Author-email: emjoyce@ucsb.edu
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
