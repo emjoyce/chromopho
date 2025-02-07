@@ -1,13 +1,40 @@
 import numpy as np
+from matplotlib.colors import ListedColormap
 
 class BipolarSubtype:
     """
     Defines properties of a bipolar cell subtype.
     """
-    def __init__(self, name, ratio = None, tiling_function = None):
+    def __init__(self, name, rf_params = None, color_filter = None, ratio = None, 
+                        tiling_function = None, rf_size_function = None):
+        """
+        Parameters:
+        name (str): the name of the subtype
+        rf_params (dict): a dictionary of parameters for the receptive field of the subtype
+            i.e. radius, eccentricity, etc. # TODO: do something with eccentricity so can model the whole 
+                                                retina or fovea+
+        color_filter (array): an RGB array color filter for the subtype
+        ratio (float): the ratio of this subtype in the mosaic
+        tiling_function (function): a custom function for more compicated tiling than simple ratio
+        rf_size_function (function): a custom (lambda) function for calculating the size of the receptive field e.g. base_radius + ecc_factor*eccentricity
+        """
+        
         self.name = name
         self.ratio = ratio
         self.tiling_function = tiling_function
+        self.rf_params = rf_params or {}
+        self.rf_size_function = rf_size_function
+        self.color_filter = color_filter
+
+    def get_receptive_field_size(self, rf_params): # TODO: TEST 
+        """
+        returns the size of the receptive field of the subtype at a given eccentricity
+        """
+        if self.rf_size_function:
+            return self.rf_size_function(eccentricity, **self.rf_params)
+        else:
+            return rf_params['base_radius']
+        
 
 class BipolarMosaic:
     """
@@ -126,12 +153,12 @@ class BipolarMosaic:
             self.grid[remaining_slots[:, 0], remaining_slots[:, 1]] = random_subtypes
             filled_slots = np.vstack([filled_slots, remaining_slots])
 
-
-    def plot(self):
+    
+    def plot(self): # TODO add custom coloring for subtypes
         """
         plots the grid
         """
-        import matplotlib.pyplot as plt
+
         plt.imshow(self.grid)
         plt.show()
         
