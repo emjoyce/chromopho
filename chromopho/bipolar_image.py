@@ -48,34 +48,35 @@ class BipolarImageProcessor:
             # get cutout of image that mosaic cells will 'see'
             # if all dims odd, center is whole number ind, easy to get cutout
             if ((img_cutout_dim[0] % 2 != 0) and (img_cutout_dim[1] % 2 != 0)) and ((mosaic_height % 2 != 0) and (mosaic_width % 2 != 0)):
-                img_cutout_i_range = [img_centerpt[0]-img_cutout_dim[0]//2, img_centerpt[0]+img_cutout_dim[0]//2]
-                img_cutout_j_range = [img_centerpt[1]-img_cutout_dim[1]//2, img_centerpt[1]+img_cutout_dim[1]//2]
+                img_cutout_i_range = [int(img_centerpt[0]-img_cutout_dim[0]//2), int(img_centerpt[0]+img_cutout_dim[0]//2-1)]
+                img_cutout_j_range = [int(img_centerpt[1]-img_cutout_dim[1]//2), int(img_centerpt[1]+img_cutout_dim[1]//2-1)]
                 
             # if one of the dims is even, then define cutout like so
             else:  
-                img_cutout_i_range = [(img_centerpt[0]-img_cutout_dim[0]/2)-1, img_centerpt[0]+img_cutout_dim[0]//2]
-                img_cutout_j_range = [(img_centerpt[1]-img_cutout_dim[1]/2)-1, img_centerpt[1]+img_cutout_dim[1]//2]
-
+                img_cutout_i_range = [int((img_centerpt[0]-img_cutout_dim[0]/2)-1), int(img_centerpt[0]+img_cutout_dim[0]//2-1)]
+                img_cutout_j_range = [int((img_centerpt[1]-img_cutout_dim[1]/2)-1), int(img_centerpt[1]+img_cutout_dim[1]//2-1)]
             # now assign squsare of pixels as receptive field of each cell in the mosaic
             mapping = {}     
-            available_pixel_inds = [i,j for i in range(img_cutout_i_range[0], img_cutout_i_range[1]) for j in range(img_cutout_j_range[0], img_cutout_j_range[1])]
+            available_pixel_inds = [(i,j) for i in range(img_cutout_i_range[0], img_cutout_i_range[1]) for j in range(img_cutout_j_range[0], img_cutout_j_range[1])]
             for i in range(mosaic_height):
                 for j in enumerate(range(mosaic_width)):
                     # the square of pixels will be square_dim x square_dim per i,j element in the mosaic
                     # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
                     # get the first dim pixels in available_pixel_inds
                     # first get j indices of the first square_dim pixels 
-                    j_inds = available_pixel_inds[:square_dim][1]
+                    j_inds = [pair[1] for pair in available_pixel_inds[:square_dim]]
                     # iterate through the first square_dim i indices and assign the i,j pairs and remove them from available_pixel_inds
                     # first i ind starts at first i in available_pixel_inds
                     first_i = available_pixel_inds[0][0]
-                    rec_field = zip(range(first_i, first_i+square_dim), range(j_inds)) 
+                    i_inds = list(range(first_i, first_i+square_dim))
+                    rec_field = [(ii,jj) for ii in i_inds for jj in j_inds]
                     mapping[(i, j)] = rec_field
                     # remove the pixels that have been assigned
                     [available_pixel_inds.remove(rec_field[i]) for i in range(len(rec_field))]
+
         else: # TODO: do this ^ but for fit_image
-            raise ValueError('functionality for fit_image not yet implemented')
-        return mapping
+            raise ValueError('functionality for fit_image not yet implemented :.(')
+        return mapping 
             
 
 
