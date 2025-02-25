@@ -7,7 +7,7 @@ class BipolarImageProcessor:
     dictating if the image should be fit to the mosaic or if the entire image should be seen by the mosaic. 
     """
 
-    def __init__(self, mosaic, image, fit_option = 'fit_image'):
+    def __init__(self, mosaic, image, fit_option = 'fit_mosaic'):
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
@@ -22,9 +22,10 @@ class BipolarImageProcessor:
         # make the receptive field map 
 
 
-    def _fit_image_and_mosaic(self):
+    def _fit_image_and_mosaic_nonoverlapping(self):
         """
         Fits the image and  mosaic in accordance with fit_option 
+        returns mapping which has the i,j indices of the mosaic as keys and the pixels in the receptive field of the cell as values
         """
         # we need to ensure that the image is the same size or larger than the mosaic, as each cell cannot have less than one pixel in its receptive field
         img_height, img_width = self.image.img_shape[:2]
@@ -63,22 +64,18 @@ class BipolarImageProcessor:
                     # the square of pixels will be square_dim x square_dim per i,j element in the mosaic
                     # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
                     # get the first dim pixels in available_pixel_inds
-                    mapping[(i, j)] = pass
-
-            # need to make sure each cell has at least one pixel in its receptive field
-
-
-
-            row_pixels = img_height // mosaic_height
-            row_remainder = img_height % mosaic_height
-            col_pixels = img_width // mosaic_width
-            col_remainder = img_width % mosaic_width
-            # if row_remainder is 0, then each row will get row_pixels
-            # if row_remainder is not 0, then the first row_remainder rows will get row_pixels + 1, the rest will get row_pixels
-            # need to figure out what to do otherwise
-            # ok if there are 500 pixels and 22 cells, then the first 8 cells will get 23 pixels, the next 10 cells will get 22 pixels, and the last 8 cells will get 23 pixels
-            # so first 8 comes from remainder/2 and middle 10 comes from img_height // mosaic_height-remainder
-            base_row_pixels = enumerate()
+                    # first get j indices of the first square_dim pixels 
+                    j_inds = available_pixel_inds[:square_dim][1]
+                    # iterate through the first square_dim i indices and assign the i,j pairs and remove them from available_pixel_inds
+                    # first i ind starts at first i in available_pixel_inds
+                    first_i = available_pixel_inds[0][0]
+                    rec_field = zip(range(first_i, first_i+square_dim), range(j_inds)) 
+                    mapping[(i, j)] = rec_field
+                    # remove the pixels that have been assigned
+                    [available_pixel_inds.remove(rec_field[i]) for i in range(len(rec_field))]
+        else: # TODO: do this ^ but for fit_image
+            raise ValueError('functionality for fit_image not yet implemented')
+        return mapping
             
 
 
