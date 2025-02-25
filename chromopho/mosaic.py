@@ -157,13 +157,13 @@ class BipolarMosaic:
 
         remaining_cells = np.argwhere(self.grid == 0).shape[0]
         if remaining_cells > 0: # TODO: could do something smarter here?
-            print(f"filling {remaining_cells} remaining slots with random subtypes")
+            #print(f"filling {remaining_cells} remaining slots with random subtypes")
             filled_slots_set = set(map(tuple, filled_slots))
             remaining_slots = np.array([inds for inds in available_slots if tuple(inds) not in filled_slots_set]) # TODO: maybe this would pick a subtype with larger ratios? 
                                                                                                                     # maybe dont touch the ones with custom functions
             # fill remaining slots with random subtypes
             # dont use -1 or that will fill some places with no subtype - will stay empty
-            random_subtypes = np.random.choice([ind for ind in self._index_to_subtype_dict.keys() if ind not -1], remaining_cells)
+            random_subtypes = np.random.choice([ind for ind in self._index_to_subtype_dict.keys() if ind != -1], remaining_cells)
             self.grid[remaining_slots[:, 0], remaining_slots[:, 1]] = random_subtypes
             filled_slots = np.vstack([filled_slots, remaining_slots])
 
