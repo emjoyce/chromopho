@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class BipolarImageProcessor:
     """
     Takes a bipolar mosaic and an images and processes the image through the mosaic using the 
@@ -18,6 +19,7 @@ class BipolarImageProcessor:
         self.mosaic = mosaic
         self.image = image
         self.fit_option = fit_option
+        self._fit_image_and_mosaic_nonoverlapping()
 
         # make the receptive field map 
 
@@ -40,6 +42,7 @@ class BipolarImageProcessor:
 
             # first calculate the nonoverlapping squares that would fit in here
             square_dim = min(img_height // mosaic_height, img_width // mosaic_width)
+            self._minimum_overlap_square_dim = square_dim
             # get the dimensions of the mosaic in the space of the image
             img_cutout_dim = square_dim * mosaic_height, square_dim * mosaic_width
 
@@ -57,9 +60,12 @@ class BipolarImageProcessor:
                 img_cutout_j_range = [int((img_centerpt[1]-img_cutout_dim[1]/2)-1), int(img_centerpt[1]+img_cutout_dim[1]//2-1)]
             # now assign squsare of pixels as receptive field of each cell in the mosaic
             mapping = {}     
+            # TODO: using a list is slow, refactor 
             available_pixel_inds = [(i,j) for i in range(img_cutout_i_range[0], img_cutout_i_range[1]) for j in range(img_cutout_j_range[0], img_cutout_j_range[1])]
+            # chop these available_pixel_inds 
             for i in range(mosaic_height):
-                for j in enumerate(range(mosaic_width)):
+                for j in range(mosaic_width):
+                    # if this i,j location does not have a cell in the mosaic, skip
                     # the square of pixels will be square_dim x square_dim per i,j element in the mosaic
                     # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
                     # get the first dim pixels in available_pixel_inds
@@ -70,13 +76,72 @@ class BipolarImageProcessor:
                     first_i = available_pixel_inds[0][0]
                     i_inds = list(range(first_i, first_i+square_dim))
                     rec_field = [(ii,jj) for ii in i_inds for jj in j_inds]
-                    mapping[(i, j)] = rec_field
+
+                    # now get the diagonal 'radius' of cube 
+                    
                     # remove the pixels that have been assigned
                     [available_pixel_inds.remove(rec_field[i]) for i in range(len(rec_field))]
+                    # if there is not a cell in the mosaic here, dont add anythign to the mapping
+                    # TODO: this is also innefficient to do this after all this computation^ 
+                    if self.mosaic.grid[i,j] == -1:
+                        continue
+                    # now have to 'circleify' the square of pixels
+                    rec_field = self._square_to_circle_pixels(rec_field)
+                    
+                    mapping[(i, j)] = rec_field
+
+
 
         else: # TODO: do this ^ but for fit_image
             raise ValueError('functionality for fit_image not yet implemented :.(')
-        return mapping 
+        self._receptive_field_map = mapping
+
+    def _square_to_circle_pixels(self, square_pixels, scale=1.0):
+        """
+        Given a list of (row, col) pixel indices that form a square,
+        produce a new list of (row, col) pixel indices that form 
+        a circumscribed circle (or circle-like region).
+        
+        :param square_pixels: List of (i, j) pixel coordinates
+        :param scale: Factor to scale the circle's radius (default=1.0)
+        :return: List of (i, j) pixel coordinates in the new circular region
+        """
+        if self._minimum_overlap_square_dim in [1, 2, 3, 4, 5, 6, 7]:
+            # these need to have scale manually scaled up to a minimum value or else turning into circle will have no effect
+            # and we want overlapping to result from this circle-fication!
+            scale_min = {1:10, 2:2.5, 3:1.5, 4:1.3, 5:1.2, 6:1.1, 7:1.1} 
+            if scale < scale_min[self._minimum_overlap_square_dim]:
+                scale = scale_min[self._minimum_overlap_square_dim]
+        # get square's bounding box
+        rows = [pix[0] for pix in square_pixels]
+        cols = [pix[1] for pix in square_pixels]
+        row_min, row_max = min(rows), max(rows)
+        col_min, col_max = min(cols), max(cols)
+        
+        # find the circle’s center and radius via diagonal of square
+        center_row = (row_min + row_max) / 2.0
+        center_col = (col_min + col_max) / 2.0
+        height = row_max - row_min
+        width  = col_max - col_min
+        half_diag = np.sqrt(height**2 + width**2) / 2.0
+        if half_diag == 0: # this is for the case where the square is just one pixel
+            half_diag = .1
+        radius = half_diag * scale  
+        
+        # add the pixels
+        circle_pixels = []
+        row_start = int(center_row - radius - 1)
+        row_end   = int(center_row + radius + 1)
+        col_start = int(center_col - radius - 1)
+        col_end   = int(center_col + radius + 1)
+
+        for r in range(row_start, row_end + 1):
+            for c in range(col_start, col_end + 1):
+                dist_sq = (r - center_row)**2 + (c - center_col)**2
+                if dist_sq <= radius**2:
+                    circle_pixels.append((r, c))
+
+        return circle_pixels
             
 
 
@@ -97,18 +162,18 @@ class BipolarImageProcessor:
 
 
 
-    def _compute_receptive_field_map(self):
-        """
-        Assigns receptive fields to the bipolar cells in the mosaic, stored in self._receptive_field_map
-        """
-        # receptive field will be a mapping of each bipolar cell to the pixels that it has in its receptive field
-        self._receptive_field_map = np.zeros_like(self.mosaic.grid)
-        for i in range(self.mosaic.grid.shape[0]):
-            for j in range(self.mosaic.grid.shape[1]):
-                # (i,j) will be the key to the dict
-                # get the receptive field size of the subtype at the current location
-                rf_size = self.mosaic.get_receptive_field_size(i, j)
-                # get the pixels in the receptive field
+    # def _compute_receptive_field_map(self):
+    #     """
+    #     Assigns receptive fields to the bipolar cells in the mosaic, stored in self._receptive_field_map
+    #     """
+    #     # receptive field will be a mapping of each bipolar cell to the pixels that it has in its receptive field
+    #     self._receptive_field_map = np.zeros_like(self.mosaic.grid)
+    #     for i in range(self.mosaic.grid.shape[0]):
+    #         for j in range(self.mosaic.grid.shape[1]):
+    #             # (i,j) will be the key to the dict
+    #             # get the receptive field size of the subtype at the current location
+    #             rf_size = self.mosaic.get_receptive_field_size(i, j)
+    #             # get the pixels in the receptive field
 
 
 

@@ -10,11 +10,11 @@ class BipolarSubtype:
         """
         Parameters:
         name (str): the name of the subtype
-        rf_size (float [0.0,1.0], function): a float representing percent of overlap, 0 for all cells would mean all cells see an equal share of the image, 
-            (0 means each cell will have circular receptive fields with as little overlap as possible covering the whole image,  .01 meaning each cell sees an additional radius around it corresponding to 
-                        .1*image width+height/2, 1 means the cell sees around it with a radius of the image width+height/2)
-            or custom (lambda) function for calculating the size of the 
-            receptive field that outputs in dva e.g. base_radius + ecc_factor*eccentricity
+        rf_size (float, function): a float representing the factor to scale up the minimmum receptive field.
+                    if set to 1, the receptive field will be the minimum amount of overlap possible, where every cell has a 
+                    circular receptive field that is the minimum diameter so that every pixel mapped under the mosaic is 
+                    seen by at least 1 cell. set to 2, the circular receptive field will have twice as large as that minimum radius, etc.
+                    or custom (lambda) function for calculating the size of the receptive field scaling metric that outputs same units as described above
         rf_params (dict): a dictionary of parameters for the receptive field of the subtype
             i.e. radius, eccentricity, etc. # TODO: maybe delete this and make them all args? do something with eccentricity so can model the whole 
                                                 retina or fovea+
