@@ -8,7 +8,7 @@ class BipolarImageProcessor:
     dictating if the image should be fit to the mosaic or if the entire image should be seen by the mosaic. 
     """
 
-    def __init__(self, mosaic, image, fit_option = 'fit_mosaic'):
+    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False):
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
@@ -19,12 +19,12 @@ class BipolarImageProcessor:
         self.mosaic = mosaic
         self.image = image
         self.fit_option = fit_option
-        self._fit_image_and_mosaic_nonoverlapping()
+        self._fit_image_and_mosaic_nonoverlapping(return_minimum_rf)
 
         # make the receptive field map 
 
 
-    def _fit_image_and_mosaic_nonoverlapping(self):
+    def _fit_image_and_mosaic_nonoverlapping(self, return_minimum = False):
         """
         Fits the image and  mosaic in accordance with fit_option 
         returns mapping which has the i,j indices of the mosaic as keys and the pixels in the receptive field of the cell as values
@@ -82,11 +82,12 @@ class BipolarImageProcessor:
                     # remove the pixels that have been assigned
                     [available_pixel_inds.remove(rec_field[i]) for i in range(len(rec_field))]
                     # if there is not a cell in the mosaic here, dont add anythign to the mapping
-                    # TODO: this is also innefficient to do this after all this computation^ 
+                    # TODO: is this is also innefficient to do this after all this computation^ 
                     if self.mosaic.grid[i,j] == -1:
-                        continue
+                        continue # without adding anything to the mapping
                     # now have to 'circleify' the square of pixels
-                    rec_field = self._square_to_circle_pixels(rec_field, i, j)
+                    if not return_minimum:
+                        rec_field = self._square_to_circle_pixels(rec_field, i, j)
                     
                     mapping[(i, j)] = rec_field
 

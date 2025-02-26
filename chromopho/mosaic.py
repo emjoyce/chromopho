@@ -76,7 +76,7 @@ class BipolarMosaic:
         self.num_cells = num_cells
         self.subtypes = subtypes if subtypes else []
         self.subtype_index_dict = {st.name: i+1 for i, st in enumerate(self.subtypes)}
-        self.subtype_index_dict[-1] = None
+        self.subtype_index_dict['none'] = -1
         self._index_to_subtype_dict = {self.subtype_index_dict[subtype.name]:subtype for subtype in self.subtypes}
         self._index_to_subtype_dict[-1] = None
 
@@ -211,6 +211,15 @@ class BipolarMosaic:
             return subtype.rf_size(eccentricity, **subtype.rf_params)
         else:
             return subtype.rf_size
+
+    def get_subtype(self, row, col):
+        """
+        returns the subtype of the cell at the given location
+        parameters:
+        row (int): the row index of the grid to pull the subtype from 
+        col (int): the column index of the grid to pull the subtype from 
+        """
+        return self._index_to_subtype_dict[self.grid[row, col]]
 
     
     def plot(self): # TODO add custom coloring for subtypes
