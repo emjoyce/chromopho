@@ -51,3 +51,25 @@ def center_x_plot(r, n, mosaic, n_cells_mosaic = 25000):
             
             ax[i,j].set_xticks(x_axis, sub_names)
             ax[i,j].legend()
+
+def graph_receptive_fields(bipolar_img, img):
+    '''
+    graphs the parts of the image that are seen by the bipolar cells in the mosaic
+    params:
+    bipolar_img: BipolarImage object
+    img: pulse2percept image object
+
+    '''
+    # graph the part of the image that is covered here 
+    image_pixels = np.array([sublist for sublist in list(bipolar_img._receptive_field_map.values()) for sublist in sublist])
+    
+    # graph the logo just at these indices
+    mask = np.zeros((img.img_shape[0], img.img_shape[1]), dtype=bool)
+    for pair in image_pixels:
+        try:
+            mask[pair[0],pair[1]] = 1
+        except:
+            pass
+    rgba = img.data.reshape(img.img_shape)
+    new_img = rgba * mask[..., np.newaxis]
+    plt.imshow(new_img)

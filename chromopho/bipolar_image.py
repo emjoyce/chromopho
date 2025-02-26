@@ -12,7 +12,7 @@ class BipolarImageProcessor:
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
-        image (array): an RGB image array
+        image (array): pulse2percept image object
         fit_option (str): how to fit the image to the mosaic, either 'fit_image' to see the whole image or 'see_entire_image' to see the entire image,
             but some cells might have no pixels in their receptive field   
         """
@@ -70,11 +70,11 @@ class BipolarImageProcessor:
                     # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
                     # get the first dim pixels in available_pixel_inds
                     # first get j indices of the first square_dim pixels 
-                    j_inds = [pair[1] for pair in available_pixel_inds[:square_dim]]
+                    j_inds = [pair[1] for pair in available_pixel_inds[:square_dim]if pair[1] >= 0]
                     # iterate through the first square_dim i indices and assign the i,j pairs and remove them from available_pixel_inds
                     # first i ind starts at first i in available_pixel_inds
                     first_i = available_pixel_inds[0][0]
-                    i_inds = list(range(first_i, first_i+square_dim))
+                    i_inds = list(range(first_i, min(first_i+square_dim, img_height)))
                     rec_field = [(ii,jj) for ii in i_inds for jj in j_inds]
 
                     # now get the diagonal 'radius' of cube 
@@ -86,7 +86,7 @@ class BipolarImageProcessor:
                     if self.mosaic.grid[i,j] == -1:
                         continue
                     # now have to 'circleify' the square of pixels
-                    rec_field = self._square_to_circle_pixels(rec_field)
+                    rec_field = self._square_to_circle_pixels(rec_field, i, j)
                     
                     mapping[(i, j)] = rec_field
 
@@ -96,16 +96,20 @@ class BipolarImageProcessor:
             raise ValueError('functionality for fit_image not yet implemented :.(')
         self._receptive_field_map = mapping
 
-    def _square_to_circle_pixels(self, square_pixels, scale=1.0):
+    def _square_to_circle_pixels(self, square_pixels, i, j):
         """
         Given a list of (row, col) pixel indices that form a square,
         produce a new list of (row, col) pixel indices that form 
         a circumscribed circle (or circle-like region).
         
-        :param square_pixels: List of (i, j) pixel coordinates
-        :param scale: Factor to scale the circle's radius (default=1.0)
-        :return: List of (i, j) pixel coordinates in the new circular region
+        Parameters:
+        square_pixels (list): a list of (row, col) pixel indices that form a square
+        i (int): the row index of the cell in the mosaic
+        j (int): the column index of the cell in the mosaic
         """
+        # pick the scaling factor from mosaic 
+        scale = self.mosaic.get_receptive_field_size(i, j)
+        
         if self._minimum_overlap_square_dim in [1, 2, 3, 4, 5, 6, 7]:
             # these need to have scale manually scaled up to a minimum value or else turning into circle will have no effect
             # and we want overlapping to result from this circle-fication!
@@ -130,16 +134,17 @@ class BipolarImageProcessor:
         
         # add the pixels
         circle_pixels = []
-        row_start = int(center_row - radius - 1)
-        row_end   = int(center_row + radius + 1)
-        col_start = int(center_col - radius - 1)
-        col_end   = int(center_col + radius + 1)
-
+        row_start = max(int(center_row - radius - 1), 0)
+        row_end   = min(int(center_row + radius + 1), self.image.img_shape[0])
+        col_start = max(int(center_col - radius - 1), 0)
+        col_end   = min(int(center_col + radius + 1), self.image.img_shape[1])
         for r in range(row_start, row_end + 1):
-            for c in range(col_start, col_end + 1):
-                dist_sq = (r - center_row)**2 + (c - center_col)**2
-                if dist_sq <= radius**2:
-                    circle_pixels.append((r, c))
+            if r <= self.image.img_shape[0] and r > 0:
+                for c in range(col_start, col_end + 1):
+                    if c <= self.image.img_shape[1] and c > 0:
+                        dist_sq = (r - center_row)**2 + (c - center_col)**2
+                        if dist_sq <= radius**2:
+                            circle_pixels.append((r, c))
 
         return circle_pixels
             
