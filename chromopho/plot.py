@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import chromopho.mosaic as mosaic
+from scipy.ndimage import gaussian_filter
+from .utils import _parse_cone_string
+
 
 def center_x_plot(r, n, mosaic, n_cells_mosaic = 25000):
     '''
@@ -140,3 +143,67 @@ def plot_mosaic(mosaic, ax=None, title=None, palette = 'viridis', plot_legend = 
     if title:
         ax.set_title(title)
     return ax
+
+
+
+
+def bipolar_image_filter_rgb(
+    rgb_image,
+    center_cones,
+    surround_cones,
+    center_sigma=1.0,
+    surround_sigma=3.0,
+    alpha_center=1.0,
+    alpha_surround=0.8,
+    rgb_to_lms = np.array([
+        [0.313, 0.639, 0.048],  # L
+        [0.155, 0.757, 0.088],  # M 
+        [0.017, 0.109, 0.874]]),   # S 
+    default_value = [0.5,0.5,0.5]):
+    """
+    Returns an rbg image showing how a center-surround bipolar cell would
+    respond in color space. 
+    uses a grey (0.5,0.5,0.5) as starting point in LMS color spaceto represent response so that 
+    increased and decreased response can be encoded i.e. a S center, -ML surround, both the +S and -ML can be encoded
+    """
+    # becuase some images have an alpha value, remove the alpha value
+    if rgb_image.shape[2] > 3:
+        rgb_image = rgb_image[:, :, :3]
+
+    # rgb to lms
+    L = np.sum(rgb_image * rgb_to_lms[0], axis=2) 
+    M = np.sum(rgb_image * rgb_to_lms[1], axis=2)
+    S = np.sum(rgb_image * rgb_to_lms[2], axis=2)
+
+    # valence/value of lms center/surround
+    cL, cM, cS = _parse_cone_string(center_cones)   
+    sL, sM, sS = _parse_cone_string(surround_cones)
+
+    # apply center and surround to whole LMS images
+    center_img = np.stack([cL * L, cM * M, cS * S], axis=-1)  
+    surround_img = np.stack([sL * L, sM * M, sS * S], axis=-1)
+
+    # apply gaussian filters to each channel
+    for channel in range(3):
+        center_img[..., channel] = gaussian_filter(center_img[..., channel], center_sigma)
+        surround_img[..., channel] = gaussian_filter(surround_img[..., channel], surround_sigma)
+
+    # combine center and surround into one image
+    final_lms = alpha_center * center_img + alpha_surround * surround_img
+
+    # make a baseline rgb image 
+    baseline_lms = np.array(default_value)
+
+    final_lms[...,0] += baseline_lms[0]/2 #divided by 2 because adding from .5 # TODO: what if the starting point is not .5
+    final_lms[...,1] += baseline_lms[1]/2
+    final_lms[...,2] += baseline_lms[2]/2
+
+    # back to rgb
+    lms_to_rgb = np.linalg.inv(rgb_to_lms)
+    rgb_out = np.dot(final_lms, lms_to_rgb.T)
+
+    # accounting for l and m cones being close to each other, bring min val to 0, norm by range to make response between 0 and 1
+    min_val, max_val = rgb_out.min(), rgb_out.max()
+    rgb_out = (rgb_out-min_val)/(max_val-min_val)
+
+    return rgb_out

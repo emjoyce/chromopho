@@ -1,11 +1,12 @@
 import numpy as np
 from matplotlib.colors import ListedColormap
 
+
 class BipolarSubtype:
     """
     Defines properties of a bipolar cell subtype.
     """
-    def __init__(self, name, rf_size, rf_params = None, color_filter = None, ratio = None, 
+    def __init__(self, name, rf_size, rf_params = None, color_filter_params = None, ratio = None, 
                         tiling_function = None):
         """
         Parameters:
@@ -16,9 +17,11 @@ class BipolarSubtype:
                     seen by at least 1 cell. set to 2, the circular receptive field will have twice as large as that minimum radius, etc.
                     or custom (lambda) function for calculating the size of the receptive field scaling metric that outputs same units as described above
         rf_params (dict): a dictionary of parameters for the receptive field of the subtype
-            i.e. radius, eccentricity, etc. # TODO: maybe delete this and make them all args? do something with eccentricity so can model the whole 
+            i.e. center_sigma (1 by default), surround_sigma (3.0 default), alpha_center (1.0 default),
+                alpha_surround (0.8 default) eccentricity, etc. # TODO: maybe delete this and make them all args? do something with eccentricity so can model the whole 
                                                 retina or fovea+
-        color_filter (array): an RGB array color filter for the subtype
+        color_filter_params (dict): for bipolar cells, dict with 'center' and 'surround' keys, each with the naem of the cone type(s) that the center and surround 
+            of the receptive field are sensitive to, '+l', '-l', '+m', '-m', '+ls', '-ls'
         ratio (float): the ratio of this subtype in the mosaic
         tiling_function (function): a custom function for more compicated tiling than simple ratio
         
@@ -32,20 +35,20 @@ class BipolarSubtype:
         if self.rf_size < 1:
             raise ValueError(f"rf_size must be between greater than 1 for subtype '{self.name}'")
 
-        self.color_filter = color_filter
+        self.color_filter_params = color_filter_params
 
-    def get_receptive_field_size(self, rf_params, eccentricity = None): # TODO: TEST 
-        """
-        returns the size of the receptive field of the subtype at a given eccentricity
-        """
-        if callable(self.rf_size):
-            if not eccentricity:
-                raise ValueError(f"eccentricity must be defined to get receptive field size for subtype '{self.name}' as the rf_size for this subtype is a function of eccentricity")
-            return self.rf_size(eccentricity, **self.rf_params)
-        else:
-            try: 
-                return rf_size
-            except KeyError: raise KeyError(f"base_radius must be defined to get receptive field size. not defined for subtype '{self.name}'")
+    # def get_receptive_field_size(self, rf_params, eccentricity = None): # TODO: TEST 
+    #     """
+    #     returns the size of the receptive field of the subtype at a given eccentricity
+    #     """
+    #     if callable(self.rf_size):
+    #         if not eccentricity:
+    #             raise ValueError(f"eccentricity must be defined to get receptive field size for subtype '{self.name}' as the rf_size for this subtype is a function of eccentricity")
+    #         return self.rf_size(eccentricity, **self.rf_params)
+    #     else:
+    #         try: 
+    #             return rf_size
+    #         except KeyError: raise KeyError(f"base_radius must be defined to get receptive field size. not defined for subtype '{self.name}'")
         
 
 class BipolarMosaic:
@@ -176,7 +179,7 @@ class BipolarMosaic:
             for j in range(self.grid.shape[1]):
                 self.receptive_field_matrix[i,j] = self.get_receptive_field_size(i, j)
 
-    def get_color_filter(self, row, col):
+    def get_color_filter_params(self, row, col):
         """
         returns the color filter of the cell at the given location
         parameters:
@@ -186,12 +189,12 @@ class BipolarMosaic:
         subtype_index = self.grid[row, col]
         subtype = self._index_to_subtype_dict[subtype_index]
         # if it contains a function:
-        if callable(subtype.color_filter):
-            color_filter = subtype.color_filter(row, col) # TODO: maybe this should have a helper func -i dont want people to have to define
+        if callable(subtype.color_filter_params):
+            color_filter_params = subtype.color_filter_params(row, col) # TODO: maybe this should have a helper func -i dont want people to have to define
                                                             # color filter function based on i,j, by eccentricity would be nicer 
         else:
-            color_filter = subtype.color_filter
-        return color_filter
+            color_filter_params = subtype.color_filter_params
+        return color_filter_params
 
     def get_receptive_field_size(self, row, col, eccentricity = None):
         """

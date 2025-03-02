@@ -1,5 +1,6 @@
 import numpy as np
-
+from .utils import img_to_rgb, _parse_cone_string
+from .plot import bipolar_image_filter_rgb
 
 class BipolarImageProcessor:
     """
@@ -148,60 +149,107 @@ class BipolarImageProcessor:
                             circle_pixels.append((r, c))
 
         return circle_pixels
+
+    # build several functions that together will compute the information held in every subtype, in every cell in the mosaic
+    # this will take all the pixels in the receptive field of a cell and use the color filter of each subtype 
+    # break that up: one function that will return the pixels of a receptive field of a cell
+    # one function that will create the image seen by every subtype by applying the color filter 
+    # one function that will take all the pixels seen by a cell and get the average color of those pixels 
+
+    def get_receptive_field_of_cell(self, i, j):
+        """
+        Returns the pixels in the receptive field of the cell at i,j location of cell mosaic 
+        """
+        return self._receptive_field_map[(i, j)]
+    
+    def _compute_subtype_image(self, subtype, default_value = [0.5,0.5,0.5], rgb_to_lms = np.array([[0.313, 0.639, 0.048],  
+                            [0.155, 0.757, 0.088], [0.017, 0.109, 0.874]])):
+        '''
+        computes the ideal image seen by the given subtype
+        '''
+
+        # get the color filter params
+        color_filter_dict = subtype.color_filter_params
+        # get the other rf params
+        rf_params = subtype.rf_params
+        # generate the image seen by the subtype
+        bipolar_image_seen = bipolar_image_filter_rgb(
+                    rgb_image = img_to_rgb(self.image),
+                    center_cones = color_filter_dict['center'],
+                    surround_cones = color_filter_dict['surround'],
+                    center_sigma = rf_params['center_sigma'],
+                    surround_sigma = rf_params['surround_sigma'],
+                    alpha_center = rf_params['alpha_center'],
+                    alpha_surround = rf_params['alpha_surround'],
+                    rgb_to_lms = np.array([
+                        [0.313, 0.639, 0.048],  # L
+                        [0.155, 0.757, 0.088],  # M 
+                        [0.017, 0.109, 0.874]]),   # S 
+                    default_value = [0.5,0.5,0.5])
+    
+    # TODO: test this! 
+    def get_average_color_of_cell(self, i, j):
+        """
+        Returns the average color of the pixels in the receptive field of the cell at i,j location of cell mosaic 
+        """
+        # get the pixels in the receptive field of the cell
+        rec_field = self.get_receptive_field_of_cell(i, j)
+        # put the image through the color filter of the subtype
+        bipolar_image_seen = self._compute_subtype_image(self.mosaic.grid[i,j])
+        # get the average color of the pixels in the receptive field
+        avg_color = np.mean(bipolar_image_seen[rec_field], axis=0)
+        return avg_color
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def _parse_cone_string(cone_string):
+    '''
+    Parses something like '+l', '-m', '+ls', '-lms' into an (L, M, S) tuple
+    indicating +1 or -1 for each relevant cone.
+    Example:
+        '+ls' -> (1, 0, 1)
+        '-lm' -> (-1, -1, 0)
+    '''
+    sign = 1 if cone_string[0] == '+' else -1
+    l, m, s = 0, 0, 0
+    for c in cone_string[1:]:  # skip the initial '+' or '-'
+        if c == 'l':
+            l += sign
+        elif c == 'm':
+            m += sign
+        elif c == 's':
+            s += sign
+    return (l, m, s)
+
+
+
+
             
 
 
 
 
-    def _calculate_min_rec_field_radius(self):
-        """
-        Calculates the minimal radius of the receptive field to tile the image with the mosaic
-        """
-        img_height, img_width = self.image.img_shape[:2]
-        # if image is 1:1 with mosaic, then the minimal radius is 0, just the pixel right in front
-        # if the image is less than 1:1 and has fewer pixels than cells, return error
-        # if the image is more than 1:1 with image and there are more pixels than cells, then what MINIMUM radius of 
-            # pixels per circular receptive field of the cell would cover every pixel in the image?
-        # depends on fit_option 
 
 
 
 
 
-    # def _compute_receptive_field_map(self):
-    #     """
-    #     Assigns receptive fields to the bipolar cells in the mosaic, stored in self._receptive_field_map
-    #     """
-    #     # receptive field will be a mapping of each bipolar cell to the pixels that it has in its receptive field
-    #     self._receptive_field_map = np.zeros_like(self.mosaic.grid)
-    #     for i in range(self.mosaic.grid.shape[0]):
-    #         for j in range(self.mosaic.grid.shape[1]):
-    #             # (i,j) will be the key to the dict
-    #             # get the receptive field size of the subtype at the current location
-    #             rf_size = self.mosaic.get_receptive_field_size(i, j)
-    #             # get the pixels in the receptive field
-
-
-
-
-
-    def process_image(self):
-        """
-        Processes the image through the mosaic using the color filter and receptive field parameters
-        of each subtype
-        """
-        # create an empty image array to store the processed image
-        processed_image = np.zeros_like(self.image)
-        for i in range(self.mosaic.grid.shape[0]):
-            for j in range(self.mosaic.grid.shape[1]):
-                # get the color filter of the subtype at the current location
-                color_filter = self.mosaic.get_color_filter(i, j)
-                # get the receptive field size of the subtype at the current location
-                rf_size = self.mosaic.get_receptive_field_size(i, j)
-                # apply the color filter to the image using the receptive field size
-                print(f'color_filter: {color_filter}, rf_size: {rf_size}')
-                # TODO: will put a function here that has a map of cell to pixels it responds to, then will process those pixels
-                #processed_image[i, j] = color_filter * rf_size
 
 
 
