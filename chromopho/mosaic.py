@@ -30,12 +30,16 @@ class BipolarSubtype:
         self.name = name
         self.ratio = ratio
         self.tiling_function = tiling_function
-        self.rf_params = rf_params or {}
         self.rf_size = rf_size
         if self.rf_size < 1:
             raise ValueError(f"rf_size must be between greater than 1 for subtype '{self.name}'")
 
         self.color_filter_params = color_filter_params
+        if rf_params is None:
+            self.rf_params = {'center_sigma':1.0, 'surround_sigma':3.0, 'alpha_center':1.0, 'alpha_surround':0.8}
+        else:
+            self.rf_params = rf_params
+        
 
     # def get_receptive_field_size(self, rf_params, eccentricity = None): # TODO: TEST 
     #     """

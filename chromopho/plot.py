@@ -3,6 +3,7 @@ import numpy as np
 import chromopho.mosaic as mosaic
 from scipy.ndimage import gaussian_filter
 from .utils import _parse_cone_string
+from collections import defaultdict
 
 
 def center_x_plot(r, n, mosaic, n_cells_mosaic = 25000):
@@ -98,7 +99,6 @@ def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None
             pass
 
     if subtype_mask is not None:
-        print('a')
         mask = mask & subtype_mask
     rgba = img.data.reshape(img.img_shape)
     new_img = rgba * mask[..., np.newaxis]
@@ -197,7 +197,7 @@ def bipolar_image_filter_rgb(
     final_lms[...,0] += baseline_lms[0]/2 #divided by 2 because adding from .5 # TODO: what if the starting point is not .5
     final_lms[...,1] += baseline_lms[1]/2
     final_lms[...,2] += baseline_lms[2]/2
-
+    
     # back to rgb
     lms_to_rgb = np.linalg.inv(rgb_to_lms)
     rgb_out = np.dot(final_lms, lms_to_rgb.T)
@@ -207,3 +207,43 @@ def bipolar_image_filter_rgb(
     rgb_out = (rgb_out-min_val)/(max_val-min_val)
 
     return rgb_out
+
+
+def plot_average_color_rec_field(bipolar_img, subtype, ax=None):
+    '''
+    takes a bipolar linked image, plots the receptive field of the specified cell type, but each receptive field returns the average color that cell sees
+    
+    '''
+    if ax is None:
+        fig, ax = plt.subplots()
+    subtype_index = bipolar_img.mosaic.subtype_index_dict[subtype]
+    # get the map of mosaic cell: image pixels
+    rec_fields = bipolar_img._receptive_field_map
+    # remove the cells that are not of the specified subtype
+    rec_fields = {cell: pixels for cell, pixels in rec_fields.items() if bipolar_img.mosaic.grid[cell] == subtype_index}
+    # get the map that has mosaic cell: average color
+    avg_color_map = bipolar_img.avg_colors_cell_map
+
+    # now create pixel:avg_color(s) dict 
+    # defaultdict wont return an error but will create a new empty list if the key is not found already for a given pixel
+    pixel_to_avg_colors = defaultdict(list)
+
+    for cell, pixels in rec_fields.items():
+        avg_color = avg_color_map[cell]
+        for pixel in pixels:
+            pixel_to_avg_colors[pixel].append(avg_color)
+
+    # now a second dict for pixel: average of the average colors
+    pixel_to_final_avg = {
+        pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items()}
+    
+    # now plot this 
+    img = bipolar_img._compute_subtype_image(bipolar_img.mosaic._index_to_subtype_dict[subtype_index])
+    # create empty image (all white) and then fill in the pixels with the average color
+    final_img = np.ones((*img.shape[0:2], 3))
+    for pixel, avg_color in pixel_to_final_avg.items():
+        final_img[pixel[0], pixel[1]] = avg_color
+    #plot
+    ax.imshow(final_img)
+
+

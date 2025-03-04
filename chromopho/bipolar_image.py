@@ -20,12 +20,13 @@ class BipolarImageProcessor:
         self.mosaic = mosaic
         self.image = image
         self.fit_option = fit_option
-        self._fit_image_and_mosaic_nonoverlapping(return_minimum_rf)
+        self._fit_image_and_mosaic(return_minimum_rf)
+        self.get_all_average_colors()
 
         # make the receptive field map 
 
 
-    def _fit_image_and_mosaic_nonoverlapping(self, return_minimum = False):
+    def _fit_image_and_mosaic(self, return_minimum = False):
         """
         Fits the image and  mosaic in accordance with fit_option 
         returns mapping which has the i,j indices of the mosaic as keys and the pixels in the receptive field of the cell as values
@@ -71,7 +72,8 @@ class BipolarImageProcessor:
                     # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
                     # get the first dim pixels in available_pixel_inds
                     # first get j indices of the first square_dim pixels 
-                    j_inds = [pair[1] for pair in available_pixel_inds[:square_dim]if pair[1] >= 0]
+                    js = np.array(available_pixel_inds[:square_dim])[:,1]
+                    j_inds = [j for j in js if j >= 0 and j < img_width]
                     # iterate through the first square_dim i indices and assign the i,j pairs and remove them from available_pixel_inds
                     # first i ind starts at first i in available_pixel_inds
                     first_i = available_pixel_inds[0][0]
@@ -186,6 +188,7 @@ class BipolarImageProcessor:
                         [0.155, 0.757, 0.088],  # M 
                         [0.017, 0.109, 0.874]]),   # S 
                     default_value = [0.5,0.5,0.5])
+        return bipolar_image_seen
     
     # TODO: test this! 
     def get_average_color_of_cell(self, i, j):
@@ -193,13 +196,33 @@ class BipolarImageProcessor:
         Returns the average color of the pixels in the receptive field of the cell at i,j location of cell mosaic 
         """
         # get the pixels in the receptive field of the cell
-        rec_field = self.get_receptive_field_of_cell(i, j)
+        rec_field = np.array(self.get_receptive_field_of_cell(i, j))
+        rows, cols = rec_field[:, 0], rec_field[:, 1]
+        # get the subtype of the cell
+        subtype = self.mosaic._index_to_subtype_dict[self.mosaic.grid[i,j]]
         # put the image through the color filter of the subtype
-        bipolar_image_seen = self._compute_subtype_image(self.mosaic.grid[i,j])
+        bipolar_image_seen = self._compute_subtype_image(subtype)
         # get the average color of the pixels in the receptive field
-        avg_color = np.mean(bipolar_image_seen[rec_field], axis=0)
+        # if 
+        avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
         return avg_color
 
+    def get_all_average_colors(self):
+        """
+        Returns a dictionary of the average color of the pixels in the receptive field of each cell in the mosaic
+        """
+        avg_colors_cell_map = {}
+        for i in range(self.mosaic.grid.shape[0]):
+            for j in range(self.mosaic.grid.shape[1]):
+                # only continue if this i,j belongs to an actual cell in mosaic
+                if self.mosaic.grid[i,j] == -1:
+                    continue
+                avg_colors_cell_map[(i, j)] = self.get_average_color_of_cell(i, j)
+        self.avg_colors_cell_map = avg_colors_cell_map
+
+
+
+    
 
 
 
@@ -218,24 +241,8 @@ class BipolarImageProcessor:
 
 
 
-def _parse_cone_string(cone_string):
-    '''
-    Parses something like '+l', '-m', '+ls', '-lms' into an (L, M, S) tuple
-    indicating +1 or -1 for each relevant cone.
-    Example:
-        '+ls' -> (1, 0, 1)
-        '-lm' -> (-1, -1, 0)
-    '''
-    sign = 1 if cone_string[0] == '+' else -1
-    l, m, s = 0, 0, 0
-    for c in cone_string[1:]:  # skip the initial '+' or '-'
-        if c == 'l':
-            l += sign
-        elif c == 'm':
-            m += sign
-        elif c == 's':
-            s += sign
-    return (l, m, s)
+
+
 
 
 
