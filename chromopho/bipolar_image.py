@@ -116,7 +116,7 @@ class BipolarImageProcessor:
         """
         # pick the scaling factor from mosaic 
         scale = self.mosaic.get_receptive_field_size(i, j)
-        
+        img_height, img_width = self.image.img_shape[:2]
         if self._minimum_overlap_square_dim in [1, 2, 3, 4, 5, 6, 7]:
             # these need to have scale manually scaled up to a minimum value or else turning into circle will have no effect
             # and we want overlapping to result from this circle-fication!
@@ -142,9 +142,9 @@ class BipolarImageProcessor:
         # add the pixels
         circle_pixels = []
         row_start = max(int(center_row - radius - 1), 0)
-        row_end   = min(int(center_row + radius + 1), self.image.img_shape[0])
+        row_end   = min(int(center_row + radius + 1), img_height)
         col_start = max(int(center_col - radius - 1), 0)
-        col_end   = min(int(center_col + radius + 1), self.image.img_shape[1])
+        col_end   = min(int(center_col + radius + 1), img_width)
         for r in range(row_start, row_end + 1):
             if r <= self.image.img_shape[0] and r > 0:
                 for c in range(col_start, col_end + 1):
@@ -176,10 +176,8 @@ class BipolarImageProcessor:
         # check if we have already computed this image
         if subtype.name in self.bipolar_images:
             bipolar_image_seen = self.bipolar_images[subtype.name]
-            print('already had')
         # get the color filter params
         else:
-            print('did not have')
             color_filter_dict = subtype.color_filter_params
             # get the other rf params
             rf_params = subtype.rf_params

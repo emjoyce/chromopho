@@ -39,10 +39,14 @@ def center_x_plot(r, n, mosaic, n_cells_mosaic = 25000):
     for i in range(n):
 
         for j in range(n):
-        
-    
+            # randomly shift circle_indives by a random amount that is constrained by the size of the mosaic
+            circle_indices_here = np.array(circle_indices)
+            circle_indices_here[0] = circle_indices_here[0] + np.random.randint(0, 20)
+            circle_indices_here[1] = circle_indices_here[1] + np.random.randint(0, 20)
+
+            
             # get the identity of all indices in circle_indices
-            sub_inds = mosaic.grid[*circle_indices]
+            sub_inds = mosaic.grid[*circle_indices_here]
             subs, counts = np.unique(sub_inds, return_counts = True)
             ind_name_dict = {v:k for k,v in mosaic.subtype_index_dict.items()}
             sub_names = [ind_name_dict[ind] for ind in subs]
@@ -50,8 +54,8 @@ def center_x_plot(r, n, mosaic, n_cells_mosaic = 25000):
             
             x_axis = np.arange(len(subs))
             width = .2
-            ax[i,j].bar(x_axis - width/2, counts, width, label = 'real values')
-            ax[i,j].bar(x_axis + width/2, expected_counts, width, label = 'expected values')
+            ax[i,j].bar(x_axis - width/2, counts, width, label = 'real values', color = '#038dc7')
+            ax[i,j].bar(x_axis + width/2, expected_counts, width, label = 'expected values', color = '#63e572')
             
             ax[i,j].set_xticks(x_axis, sub_names)
             ax[i,j].legend()
@@ -235,7 +239,7 @@ def plot_average_color_rec_field(bipolar_img, subtype, ax=None):
 
     # now a second dict for pixel: average of the average colors
     pixel_to_final_avg = {
-        pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items()}
+        pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items() if pixel[0] < bipolar_img.image.img_shape[0] and pixel[1] < bipolar_img.image.img_shape[1]}
     
     # now plot this 
     img = bipolar_img._compute_subtype_image(bipolar_img.mosaic._index_to_subtype_dict[subtype_index])
