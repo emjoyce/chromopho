@@ -1,6 +1,7 @@
 import numpy as np
 from .utils import img_to_rgb, _parse_cone_string
 from .plot import bipolar_image_filter_rgb
+import concurrent.futures
 
 class BipolarImageProcessor:
     """
@@ -20,8 +21,10 @@ class BipolarImageProcessor:
         self.mosaic = mosaic
         self.image = image
         self.fit_option = fit_option
+        self.bipolar_images = {}
         self._fit_image_and_mosaic(return_minimum_rf)
         self.get_all_average_colors()
+        
 
         # make the receptive field map 
 
@@ -170,24 +173,31 @@ class BipolarImageProcessor:
         computes the ideal image seen by the given subtype
         '''
 
+        # check if we have already computed this image
+        if subtype.name in self.bipolar_images:
+            bipolar_image_seen = self.bipolar_images[subtype.name]
+            print('already had')
         # get the color filter params
-        color_filter_dict = subtype.color_filter_params
-        # get the other rf params
-        rf_params = subtype.rf_params
-        # generate the image seen by the subtype
-        bipolar_image_seen = bipolar_image_filter_rgb(
-                    rgb_image = img_to_rgb(self.image),
-                    center_cones = color_filter_dict['center'],
-                    surround_cones = color_filter_dict['surround'],
-                    center_sigma = rf_params['center_sigma'],
-                    surround_sigma = rf_params['surround_sigma'],
-                    alpha_center = rf_params['alpha_center'],
-                    alpha_surround = rf_params['alpha_surround'],
-                    rgb_to_lms = np.array([
-                        [0.313, 0.639, 0.048],  # L
-                        [0.155, 0.757, 0.088],  # M 
-                        [0.017, 0.109, 0.874]]),   # S 
-                    default_value = [0.5,0.5,0.5])
+        else:
+            print('did not have')
+            color_filter_dict = subtype.color_filter_params
+            # get the other rf params
+            rf_params = subtype.rf_params
+            # generate the image seen by the subtype
+            bipolar_image_seen = bipolar_image_filter_rgb(
+                        rgb_image = img_to_rgb(self.image),
+                        center_cones = color_filter_dict['center'],
+                        surround_cones = color_filter_dict['surround'],
+                        center_sigma = rf_params['center_sigma'],
+                        surround_sigma = rf_params['surround_sigma'],
+                        alpha_center = rf_params['alpha_center'],
+                        alpha_surround = rf_params['alpha_surround'],
+                        rgb_to_lms = np.array([
+                            [0.313, 0.639, 0.048],  # L
+                            [0.155, 0.757, 0.088],  # M 
+                            [0.017, 0.109, 0.874]]),   # S 
+                        default_value = [0.5,0.5,0.5])
+            self.bipolar_images[subtype.name] = bipolar_image_seen
         return bipolar_image_seen
     
     # TODO: test this! 
@@ -203,8 +213,18 @@ class BipolarImageProcessor:
         # put the image through the color filter of the subtype
         bipolar_image_seen = self._compute_subtype_image(subtype)
         # get the average color of the pixels in the receptive field
-        # if 
-        avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
+        # TODO: no clue why this sometimes happens, it never happened before i added storage of self.bipolar_images[subtype.name] = bipolar_image_seen
+        try:
+            avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
+        except:
+            # remove any row, col pair that is out of bounds
+            # find the inds of the out of bounds rows and cols
+            out_of_bounds_inds = [i for i in range(len(rows)) if rows[i] >= bipolar_image_seen.shape[0] or cols[i] >= bipolar_image_seen.shape[1]]
+            # remove these inds from rows and cols
+            rows = np.delete(rows, out_of_bounds_inds)
+            cols = np.delete(cols, out_of_bounds_inds)
+            print('had to delete something')
+            avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
         return avg_color
 
     def get_all_average_colors(self):
