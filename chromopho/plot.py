@@ -163,7 +163,8 @@ def bipolar_image_filter_rgb(
         [0.313, 0.639, 0.048],  # L
         [0.155, 0.757, 0.088],  # M 
         [0.017, 0.109, 0.874]]),   # S 
-    default_value = [0.5,0.5,0.5]):
+    default_value = [0.5,0.5,0.5], 
+    method = 'lms'):
     """
     Returns an rbg image showing how a center-surround bipolar cell would
     respond in color space. 
@@ -189,28 +190,47 @@ def bipolar_image_filter_rgb(
 
     # apply gaussian filters to each channel
     for channel in range(3):
+        # LMS space responses for center and surround based on the parseing of the cone strings
         center_img[..., channel] = gaussian_filter(center_img[..., channel], center_sigma)
         surround_img[..., channel] = gaussian_filter(surround_img[..., channel], surround_sigma)
 
     # combine center and surround into one image
     final_lms = alpha_center * center_img + alpha_surround * surround_img
-
-    # make a baseline rgb image 
-    baseline_lms = np.array(default_value)
-
-    final_lms[...,0] += baseline_lms[0]/2 #divided by 2 because adding from .5 # TODO: what if the starting point is not .5
-    final_lms[...,1] += baseline_lms[1]/2
-    final_lms[...,2] += baseline_lms[2]/2
     
-    # back to rgb
-    lms_to_rgb = np.linalg.inv(rgb_to_lms)
-    rgb_out = np.dot(final_lms, lms_to_rgb.T)
+    if method == 'lms':
 
-    # accounting for l and m cones being close to each other, bring min val to 0, norm by range to make response between 0 and 1
-    min_val, max_val = rgb_out.min(), rgb_out.max()
-    rgb_out = (rgb_out-min_val)/(max_val-min_val)
+        # make a baseline rgb image, defaults baseline to gray
+        baseline_lms = np.array(default_value)
 
-    return rgb_out
+        final_lms[...,0] += baseline_lms[0]/2 #divided by 2 because adding from .5 # TODO: what if the starting point is not .5
+        final_lms[...,1] += baseline_lms[1]/2
+        final_lms[...,2] += baseline_lms[2]/2        
+        
+        # back to rgb from lms
+        lms_to_rgb = np.linalg.inv(rgb_to_lms)
+        rgb_out = np.dot(final_lms, lms_to_rgb.T)
+
+        # accounting for l and m cones being close to each other, bring min val to 0, norm by range to make response between 0 and 1
+        min_val, max_val = rgb_out.min(), rgb_out.max()
+        rgb_out = (rgb_out-min_val)/(max_val-min_val)
+
+        return rgb_out
+    
+    elif method == 'grayscale' or method == 'greyscale':
+        # combine center and surroudn into one output by taking center - surround 
+        # so take center response and subtract surround response
+        # if i have two or more responses in center or surround, take the average of them 
+        avg_center = np.mean(center_img, axis = -1)
+        avg_surround = np.mean(surround_img, axis = -1)
+        # subtract the two to get the output
+
+        # just add cause one should be -
+        output = avg_center+avg_surround
+        output = (output - output.min())/(output.max()-output.min())
+
+        return output
+
+
 
 
 def plot_average_color_rec_field(bipolar_img, subtype, ax=None):
@@ -249,5 +269,4 @@ def plot_average_color_rec_field(bipolar_img, subtype, ax=None):
         final_img[pixel[0], pixel[1]] = avg_color
     #plot
     ax.imshow(final_img)
-
 

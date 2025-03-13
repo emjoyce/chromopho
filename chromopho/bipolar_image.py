@@ -167,7 +167,7 @@ class BipolarImageProcessor:
         """
         return self._receptive_field_map[(i, j)]
     
-    def _compute_subtype_image(self, subtype, default_value = [0.5,0.5,0.5], rgb_to_lms = np.array([[0.313, 0.639, 0.048],  
+    def _compute_subtype_image(self, subtype, method = 'lms', default_value = [0.5,0.5,0.5], rgb_to_lms = np.array([[0.313, 0.639, 0.048],  
                             [0.155, 0.757, 0.088], [0.017, 0.109, 0.874]])):
         '''
         computes the ideal image seen by the given subtype
@@ -182,6 +182,8 @@ class BipolarImageProcessor:
             # get the other rf params
             rf_params = subtype.rf_params
             # generate the image seen by the subtype
+            # computes more of the cone info coming in 
+            # s-on would compute 
             bipolar_image_seen = bipolar_image_filter_rgb(
                         rgb_image = img_to_rgb(self.image),
                         center_cones = color_filter_dict['center'],
@@ -190,15 +192,14 @@ class BipolarImageProcessor:
                         surround_sigma = rf_params['surround_sigma'],
                         alpha_center = rf_params['alpha_center'],
                         alpha_surround = rf_params['alpha_surround'],
-                        rgb_to_lms = np.array([
-                            [0.313, 0.639, 0.048],  # L
-                            [0.155, 0.757, 0.088],  # M 
-                            [0.017, 0.109, 0.874]]),   # S 
-                        default_value = [0.5,0.5,0.5])
+                        rgb_to_lms = rgb_to_lms,   # S 
+                        default_value = default_value, 
+                        method = method)
+                # so the image should output a single value dependign on subtype, which if s+, would be the output of l cones minue the output of m+l
+
             self.bipolar_images[subtype.name] = bipolar_image_seen
         return bipolar_image_seen
     
-    # TODO: test this! 
     def get_average_color_of_cell(self, i, j):
         """
         Returns the average color of the pixels in the receptive field of the cell at i,j location of cell mosaic 
