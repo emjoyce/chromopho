@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 
 def _parse_cone_string(cone_string):
@@ -58,3 +59,43 @@ def img_to_rgb(img):
     converts a p2p image to an rgb image
     '''
     return img.data.reshape(img.img_shape)[:,:,:3]
+
+
+
+def save_structured_features(array, output_dir, filename_base, filename_extension):
+    """
+    Saves a numpy array with first two columns as integers and the rest as floats,
+    ensuring type consistency when saving and loading.
+
+    Parameters:
+    - array (np.ndarray): Input numpy array with at least 2 columns.
+    - output_dir (str): Directory where the file should be saved.
+    - filename_base (str): Base filename (without extension).
+    - filename_extension (str): File extension (e.g. '_features.npy' or '_labels.npy').
+    
+    Returns:
+    - str: Full path of the saved file.
+    """
+    if array.shape[1] < 3:
+        raise ValueError("Array must have at least 3 columns (x,y of pixel + at least 1 subtype response column).")
+
+    # first two columns int, rest float
+    num_float_cols = array.shape[1] - 2
+    dtype = [('x', 'i4'), ('y', 'i4')] + [(f'col{i+3}', 'f4') for i in range(num_float_cols)]
+
+    # Convert to structured array
+    structured_array = np.zeros(array.shape[0], dtype=dtype)
+    structured_array['x'] = array[:, 0].astype(np.int32)
+    structured_array['y'] = array[:, 1].astype(np.int32)
+
+    for i in range(num_float_cols):
+        structured_array[f'col{i+3}'] = array[:, i+2]
+
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save file
+    filepath = os.path.join(output_dir, filename_base + filename_extension)
+    np.save(filepath, structured_array)
+
+# TODO : a function that will pull out pixels x radius away from a given pixel 
