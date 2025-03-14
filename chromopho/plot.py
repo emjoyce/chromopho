@@ -220,13 +220,27 @@ def bipolar_image_filter_rgb(
         # combine center and surroudn into one output by taking center - surround 
         # so take center response and subtract surround response
         # if i have two or more responses in center or surround, take the average of them 
-        avg_center = np.mean(center_img, axis = -1)
-        avg_surround = np.mean(surround_img, axis = -1)
+        # drop the columns from center_img that are 0 in cL, cM, cS
+        keep_columns_center = np.array([cL, cM, cS], dtype=bool)
+        new_center_img = center_img[..., keep_columns_center]
+
+        # drop the columns from surround_img that are 0 in sL, sM, sS
+        keep_columns_surround = np.array([sL, sM, sS], dtype=bool)
+        new_surround_img = surround_img[..., keep_columns_surround]
+
+        avg_center = np.mean(new_center_img, axis = -1)
+        avg_surround = np.mean(new_surround_img, axis = -1)
         # subtract the two to get the output
 
         # just add cause one should be -
         output = avg_center+avg_surround
-        output = (output - output.min())/(output.max()-output.min())
+        # need to normalize, but not in a way that would 
+        # example - if i have an image of all yellow, i want the response to be different for each cone type 
+        # so I wont normalize to 0-1, but I will normalize to the range of the output
+        # so what is the theoretical max and min here? -1 to 1 right? 
+        # ok: normalize to make -1 0 and 1 1 
+        output = (output + 1)/2
+        #output = (output - output.min())/(output.max()-output.min())
 
         return output
 

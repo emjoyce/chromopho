@@ -10,20 +10,22 @@ class BipolarImageProcessor:
     dictating if the image should be fit to the mosaic or if the entire image should be seen by the mosaic. 
     """
 
-    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False):
+    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale'):
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
         image (array): pulse2percept image object
         fit_option (str): how to fit the image to the mosaic, either 'fit_image' to see the whole image or 'see_entire_image' to see the entire image,
             but some cells might have no pixels in their receptive field   
+        method (str): the method to use to compute the average color of the pixels in the receptive field of a cell. avg color could be rgb 
+            (lifo coming in from cones) or grayscale (info going out from bipolar cells)
         """
         self.mosaic = mosaic
         self.image = image
         self.fit_option = fit_option
         self.bipolar_images = {}
         self._fit_image_and_mosaic(return_minimum_rf)
-        self.get_all_average_colors()
+        self.get_all_average_colors(method = method)
         
 
         # make the receptive field map 
@@ -200,7 +202,9 @@ class BipolarImageProcessor:
             self.bipolar_images[subtype.name] = bipolar_image_seen
         return bipolar_image_seen
     
-    def get_average_color_of_cell(self, i, j):
+    # TODO: add a calculation of the center and surround activity of lms based on the receptive field of each bipolar cell 
+    # that will be when use_ideal = False
+    def get_average_color_of_cell(self, i, j, method = 'lms', use_ideal = True):
         """
         Returns the average color of the pixels in the receptive field of the cell at i,j location of cell mosaic 
         """
@@ -210,7 +214,7 @@ class BipolarImageProcessor:
         # get the subtype of the cell
         subtype = self.mosaic._index_to_subtype_dict[self.mosaic.grid[i,j]]
         # put the image through the color filter of the subtype
-        bipolar_image_seen = self._compute_subtype_image(subtype)
+        bipolar_image_seen = self._compute_subtype_image(subtype, method = method)
         # get the average color of the pixels in the receptive field
         # TODO: no clue why this sometimes happens, it never happened before i added storage of self.bipolar_images[subtype.name] = bipolar_image_seen
         try:
@@ -218,6 +222,7 @@ class BipolarImageProcessor:
         except:
             # remove any row, col pair that is out of bounds
             # find the inds of the out of bounds rows and cols
+            # TODO figure out why this happens twice per image!! 
             out_of_bounds_inds = [i for i in range(len(rows)) if rows[i] >= bipolar_image_seen.shape[0] or cols[i] >= bipolar_image_seen.shape[1]]
             # remove these inds from rows and cols
             rows = np.delete(rows, out_of_bounds_inds)
@@ -226,7 +231,7 @@ class BipolarImageProcessor:
             avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
         return avg_color
 
-    def get_all_average_colors(self):
+    def get_all_average_colors(self, method = 'lms'):
         """
         Returns a dictionary of the average color of the pixels in the receptive field of each cell in the mosaic
         """
@@ -236,7 +241,7 @@ class BipolarImageProcessor:
                 # only continue if this i,j belongs to an actual cell in mosaic
                 if self.mosaic.grid[i,j] == -1:
                     continue
-                avg_colors_cell_map[(i, j)] = self.get_average_color_of_cell(i, j)
+                avg_colors_cell_map[(i, j)] = self.get_average_color_of_cell(i, j, method = method)
         self.avg_colors_cell_map = avg_colors_cell_map
 
 
