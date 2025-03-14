@@ -2,6 +2,7 @@ import numpy as np
 from .utils import img_to_rgb, _parse_cone_string
 from .plot import bipolar_image_filter_rgb
 import concurrent.futures
+from collections import defaultdict
 
 class BipolarImageProcessor:
     """
@@ -26,7 +27,8 @@ class BipolarImageProcessor:
         self.bipolar_images = {}
         self._fit_image_and_mosaic(return_minimum_rf)
         self.get_all_average_colors(method = method)
-        
+        self.avg_subtype_response_per_pixel = {}
+        self.get_avg_color_map_per_pixel()
 
         # make the receptive field map 
 
@@ -243,6 +245,35 @@ class BipolarImageProcessor:
                     continue
                 avg_colors_cell_map[(i, j)] = self.get_average_color_of_cell(i, j, method = method)
         self.avg_colors_cell_map = avg_colors_cell_map
+
+    def get_avg_color_map_per_pixel(self):
+        """
+        Returns the average color of the pixels in the receptive field of each cell in the mosaic
+        """
+        for subtype in self.mosaic.subtypes:
+            subtype_index = self.mosaic.subtype_index_dict[subtype.name]
+            # get the map of mosaic cell: image pixels
+            rec_fields = self._receptive_field_map
+            # remove the cells that are not of the specified subtype
+            rec_fields = {cell: pixels for cell, pixels in rec_fields.items() if self.mosaic.grid[cell] == subtype_index}
+            # get the map that has mosaic cell: average color
+            avg_color_map = self.avg_colors_cell_map
+
+            # now create pixel:avg_color(s) dict 
+            # defaultdict wont return an error but will create a new empty list if the key is not found already for a given pixel
+            pixel_to_avg_colors = defaultdict(list)
+
+            for cell, pixels in rec_fields.items():
+                avg_color = avg_color_map[cell]
+                for pixel in pixels:
+                    pixel_to_avg_colors[pixel].append(avg_color)
+
+            # now a second dict for pixel: average of the average colors
+            pixel_to_final_avg = {
+                pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items() if pixel[0] < self.image.img_shape[0] and pixel[1] < self.image.img_shape[1]}
+            
+            
+            self.avg_subtype_response_per_pixel[subtype.name] = pixel_to_final_avg
 
 
 

@@ -239,6 +239,7 @@ def bipolar_image_filter_rgb(
         # so I wont normalize to 0-1, but I will normalize to the range of the output
         # so what is the theoretical max and min here? -1 to 1 right? 
         # ok: normalize to make -1 0 and 1 1 
+        # TODO: this might be better as sigmoid or something 
         output = (output + 1)/2
         #output = (output - output.min())/(output.max()-output.min())
 
@@ -247,38 +248,17 @@ def bipolar_image_filter_rgb(
 
 
 
-def plot_average_color_rec_field(bipolar_img, subtype, ax=None):
+def plot_average_color_rec_field(bipolar_img, subtype_name, ax=None):
     '''
     takes a bipolar linked image, plots the receptive field of the specified cell type, but each receptive field returns the average color that cell sees
     
     '''
     if ax is None:
         fig, ax = plt.subplots()
-    subtype_index = bipolar_img.mosaic.subtype_index_dict[subtype]
-    # get the map of mosaic cell: image pixels
-    rec_fields = bipolar_img._receptive_field_map
-    # remove the cells that are not of the specified subtype
-    rec_fields = {cell: pixels for cell, pixels in rec_fields.items() if bipolar_img.mosaic.grid[cell] == subtype_index}
-    # get the map that has mosaic cell: average color
-    avg_color_map = bipolar_img.avg_colors_cell_map
-
-    # now create pixel:avg_color(s) dict 
-    # defaultdict wont return an error but will create a new empty list if the key is not found already for a given pixel
-    pixel_to_avg_colors = defaultdict(list)
-
-    for cell, pixels in rec_fields.items():
-        avg_color = avg_color_map[cell]
-        for pixel in pixels:
-            pixel_to_avg_colors[pixel].append(avg_color)
-
-    # now a second dict for pixel: average of the average colors
-    pixel_to_final_avg = {
-        pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items() if pixel[0] < bipolar_img.image.img_shape[0] and pixel[1] < bipolar_img.image.img_shape[1]}
+    pixel_to_final_avg = bipolar_img.avg_subtype_response_per_pixel[subtype_name]
+    print(pixel_to_final_avg)
+    final_img = np.ones((*bipolar_img.image.img_shape[0:2], 3))
     
-    # now plot this 
-    img = bipolar_img._compute_subtype_image(bipolar_img.mosaic._index_to_subtype_dict[subtype_index])
-    # create empty image (all white) and then fill in the pixels with the average color
-    final_img = np.ones((*img.shape[0:2], 3))
     for pixel, avg_color in pixel_to_final_avg.items():
         final_img[pixel[0], pixel[1]] = avg_color
     #plot
