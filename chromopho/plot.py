@@ -172,9 +172,15 @@ def bipolar_image_filter_rgb(
     increased and decreased response can be encoded i.e. a S center, -ML surround, both the +S and -ML can be encoded
     """
     # becuase some images have an alpha value, remove the alpha value
+
+
+    # now if the places where alpha == 0 is black, replace with white because we need the contrast to see black logos 
+    alpha_mask = rgb_image[..., -1] == 0
+    rgb_image[alpha_mask, :3] = 1
+
     if rgb_image.shape[2] > 3:
         rgb_image = rgb_image[:, :, :3]
-
+    
     # rgb to lms
     L = np.sum(rgb_image * rgb_to_lms[0], axis=2) 
     M = np.sum(rgb_image * rgb_to_lms[1], axis=2)
