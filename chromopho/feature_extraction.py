@@ -7,7 +7,7 @@ from .utils import save_structured_features
 import pulse2percept.stimuli.images
 p2pimg = pulse2percept.stimuli.images.ImageStimulus
 
-def extract_features(image_dir, features_output_dir, mosaic, analysis_complete_dir):
+def extract_features(image_dir, features_output_dir, mosaic, analysis_complete_dir, verbose = False):
 
     '''
     takes an image path, a bipolar mosaic runs through BipolarImageProcessor to get the 
@@ -15,15 +15,33 @@ def extract_features(image_dir, features_output_dir, mosaic, analysis_complete_d
     stores t
 
     '''
+    if verbose:
+        # get the number of .png files
+        num_files = len([filename for filename in os.listdir(image_dir) if '.png' in filename])
+        print(f'Extracting features from {num_files} images in {image_dir}...')
+        file_count = 0 
+
     features, labels = [], []
     # load the image to p2pimg
-    for filename in os.listdir(image_dir):
+    for filename in os.listdir(image_dir):            
         if '.png' in filename:
+            if verbose:
+                file_count += 1
+                # every 5% of files we get through, print the progress
+                if file_count % (num_files // 20) == 0:
+                    print(f'{(file_count/num_files)*100}% of images processed...')
+
             img_path = os.path.join(image_dir, filename)
             img = p2pimg(img_path)
 
             img_h, img_w, img_c = img.img_shape
-            rgb_img = img.data.reshape(img.img_shape)[:,:,:3]
+            rgb_img = img.data.reshape(img.img_shape)
+
+            # now if the places where alpha == 0 is black, replace with white because we need the contrast to see black logos 
+            alpha_mask = rgb_img[..., -1] == 0
+            rgb_img[alpha_mask, :3] = 1
+
+            rgb_img = rgb_img[..., :3]
 
             # create a BipolarImageProcessor object
             bipolar_image = BipolarImageProcessor(mosaic, img)
@@ -81,6 +99,7 @@ def extract_features(image_dir, features_output_dir, mosaic, analysis_complete_d
 
             # now move the image to the analysis_complete_dir
             os.rename(img_path, os.path.join(analysis_complete_dir, filename_base+'.png'))
+
 
             
 
