@@ -60,7 +60,7 @@ def center_x_plot(r, n, mosaic, n_cells_mosaic = 25000):
             ax[i,j].set_xticks(x_axis, sub_names)
             ax[i,j].legend()
 
-def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None, title=None):
+def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None, title=None, show_ax = True):
     '''
     graphs the parts of the image that are seen by the bipolar cells in the mosaic
     params:
@@ -71,6 +71,8 @@ def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None
     ax: optional, matplotlib axis object
     title: optional, title for the plot
     '''
+    if ax is None:
+        fig, ax = plt.subplots()
     # graph the part of the image that is covered here 
     image_pixels = np.array([sublist for sublist in list(bipolar_img._receptive_field_map.values()) for sublist in sublist])
     
@@ -114,6 +116,9 @@ def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None
     
     if title:
         ax.set_title(title)
+    
+    if not show_ax:
+        ax.axis('off')
 
 
 def plot_mosaic(mosaic, ax=None, title=None, palette = 'viridis', plot_legend = True, legend_loc = 'upper left',
@@ -254,7 +259,7 @@ def bipolar_image_filter_rgb(
 
 
 
-def plot_average_color_rec_field(bipolar_img, subtype_name, ax=None):
+def plot_average_color_rec_field(bipolar_img, subtype_name, ax=None, show_ax = False):
     '''
     takes a bipolar linked image, plots the receptive field of the specified cell type, but each receptive field returns the average color that cell sees
     
@@ -268,5 +273,7 @@ def plot_average_color_rec_field(bipolar_img, subtype_name, ax=None):
     for pixel, avg_color in pixel_to_final_avg.items():
         final_img[pixel[0], pixel[1]] = avg_color
     #plot
+    if not show_ax:
+        ax.axis('off')
     ax.imshow(final_img)
 
