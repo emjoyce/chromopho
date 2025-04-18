@@ -3,6 +3,7 @@ from .utils import img_to_rgb, _parse_cone_string
 from .plot import bipolar_image_filter_rgb
 import concurrent.futures
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 class BipolarImageProcessor:
     """
@@ -41,7 +42,7 @@ class BipolarImageProcessor:
         returns mapping which has the i,j indices of the mosaic as keys and the pixels in the receptive field of the cell as values
         """
         # we need to ensure that the image is the same size or larger than the mosaic, as each cell cannot have less than one pixel in its receptive field
-        img_height, img_width = self.image.img_shape[:2]
+        img_height, img_width = self.image.shape[:2]
         mosaic_height, mosaic_width = self.mosaic.grid.shape[:2]
         if img_height < mosaic_height or img_width < mosaic_width:
             raise ValueError('Image is too small to fit the mosaic')
@@ -122,7 +123,7 @@ class BipolarImageProcessor:
         """
         # pick the scaling factor from mosaic 
         scale = self.mosaic.get_receptive_field_size(i, j)
-        img_height, img_width = self.image.img_shape[:2]
+        img_height, img_width = self.image.shape[:2]
         if self._minimum_overlap_square_dim in [1, 2, 3, 4, 5, 6, 7]:
             # these need to have scale manually scaled up to a minimum value or else turning into circle will have no effect
             # and we want overlapping to result from this circle-fication!
@@ -152,9 +153,9 @@ class BipolarImageProcessor:
         col_start = max(int(center_col - radius - 1), 0)
         col_end   = min(int(center_col + radius + 1), img_width)
         for r in range(row_start, row_end + 1):
-            if r <= self.image.img_shape[0] and r > 0:
+            if r <= self.image.shape[0] and r > 0:
                 for c in range(col_start, col_end + 1):
-                    if c <= self.image.img_shape[1] and c > 0:
+                    if c <= self.image.shape[1] and c > 0:
                         dist_sq = (r - center_row)**2 + (c - center_col)**2
                         if dist_sq <= radius**2:
                             circle_pixels.append((r, c))
@@ -191,7 +192,7 @@ class BipolarImageProcessor:
             # computes more of the cone info coming in 
             # s-on would compute 
             bipolar_image_seen = bipolar_image_filter_rgb(
-                        rgb_image = img_to_rgb(self.image),
+                        rgb_image = self.image,
                         center_cones = color_filter_dict['center'],
                         surround_cones = color_filter_dict['surround'],
                         center_sigma = rf_params['center_sigma'],
@@ -281,7 +282,7 @@ class BipolarImageProcessor:
 
             # now a second dict for pixel: average of the average colors
             pixel_to_final_avg = {
-                pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items() if pixel[0] < self.image.img_shape[0] and pixel[1] < self.image.img_shape[1]}
+                pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items() if pixel[0] < self.image.shape[0] and pixel[1] < self.image.shape[1]}
             
             
             self.avg_subtype_response_per_pixel[subtype.name] = pixel_to_final_avg

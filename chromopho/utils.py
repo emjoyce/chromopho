@@ -58,7 +58,7 @@ def img_to_rgb(img):
     '''
     converts a p2p image to an rgb image
     '''
-    return img.data.reshape(img.img_shape)[:,:,:3]
+    return img.reshape(img.shape)[:,:,:3]
 
 
 

@@ -7,7 +7,7 @@ from .utils import save_structured_features
 import pulse2percept.stimuli.images
 p2pimg = pulse2percept.stimuli.images.ImageStimulus
 
-def extract_features(bipolar_img, return_labels = True):
+def extract_features(bipolar_img, return_labels = True, alpha_white = False):
     # now extract dict with subtype:{pixel:avg_response}
     avg_response_dict = bipolar_img.avg_subtype_response_per_pixel
     # need all 'pixel' entries in all dict 
@@ -16,9 +16,11 @@ def extract_features(bipolar_img, return_labels = True):
     if return_labels:
         labels_array = np.zeros((len(pixels_seen), 5)) # first 2 because pixels need x and y, then r,g,b of image
         # now if the places where alpha == 0 is black, replace with white because we need the contrast to see black logos 
-        rgb_img = bipolar_img.image.data.reshape(bipolar_img.image.img_shape)
-        alpha_mask = rgb_img[..., -1] == 0
-        rgb_img[alpha_mask, :3] = 1
+        rgb_img = bipolar_img.image.reshape(bipolar_img.image.shape)
+        # if there are alphas in the image, replace spaces where alpha = 0 wiht white 
+        if rgb_img.shape[-1] == 4 and alpha_white:
+            alpha_mask = rgb_img[..., -1] == 0
+            rgb_img[alpha_mask, :3] = 1
         rgb_img = rgb_img[..., :3]
     subtypes = sorted(avg_response_dict.keys())
     missing_avgs = []

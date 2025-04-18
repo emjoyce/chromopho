@@ -87,17 +87,17 @@ def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None
         # so we have the cells in grid that are of the specified subtypes, now we need to get the indices of the pixels that are covered by these cells
         # we can use the subtype_mosaic_inds to get the corresponding indices in the image_pixels
         subtype_image_pixels = [bipolar_img._receptive_field_map[pair] for pair in subtype_mosaic_inds]
-        subtype_image_pixels = list(set([pair for sublist in subtype_image_pixels for pair in sublist if pair[0] < img.img_shape[0] and pair[1] < img.img_shape[1]]))
+        subtype_image_pixels = list(set([pair for sublist in subtype_image_pixels for pair in sublist if pair[0] < img.shape[0] and pair[1] < img.shape[1]]))
         unzipped_i, unzipped_j = zip(*subtype_image_pixels)
         # now this to a mask 
-        subtype_mask = np.zeros((img.img_shape[0], img.img_shape[1]), dtype=bool)
+        subtype_mask = np.zeros((img.shape[0], img.shape[1]), dtype=bool)
         
         subtype_mask[unzipped_i, unzipped_j] = 1
 
 
     
     # graph the logo just at these indices
-    mask = np.zeros((img.img_shape[0], img.img_shape[1]), dtype=bool)
+    mask = np.zeros((img.shape[0], img.shape[1]), dtype=bool)
     for pair in image_pixels:
         try:
             mask[pair[0], pair[1]] = 1
@@ -106,7 +106,7 @@ def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None
 
     if subtype_mask is not None:
         mask = mask & subtype_mask
-    rgba = img.data.reshape(img.img_shape)
+    rgba = img.reshape(img.shape)
     new_img = rgba * mask[..., np.newaxis]
     
     if ax is None:
@@ -180,8 +180,9 @@ def bipolar_image_filter_rgb(
 
 
     # now if the places where alpha == 0 is black, replace with white because we need the contrast to see black logos 
-    alpha_mask = rgb_image[..., -1] == 0
-    rgb_image[alpha_mask, :3] = 1
+    if rgb_image.shape[-1] == 4:
+        alpha_mask = rgb_image[..., -1] == 0
+        rgb_image[alpha_mask, :3] = 1
 
     if rgb_image.shape[2] > 3:
         rgb_image = rgb_image[:, :, :3]
@@ -267,8 +268,7 @@ def plot_average_color_rec_field(bipolar_img, subtype_name, ax=None, show_ax = F
     if ax is None:
         fig, ax = plt.subplots()
     pixel_to_final_avg = bipolar_img.avg_subtype_response_per_pixel[subtype_name]
-    print(pixel_to_final_avg)
-    final_img = np.ones((*bipolar_img.image.img_shape[0:2], 3))
+    final_img = np.ones((*bipolar_img.image.shape[0:2], 3))
     
     for pixel, avg_color in pixel_to_final_avg.items():
         final_img[pixel[0], pixel[1]] = avg_color

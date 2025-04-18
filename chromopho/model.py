@@ -96,7 +96,7 @@ def evaluate_model_image(model, Xs_test, Ys_test, img_h, img_w, return_sim = Fal
     else:
         return y_pred_img, y_img
 
-def phosphene_simulation(radius, mosaic, model, dummy_img, stim_response = 1, seed = None):
+def phosphene_simulation(radius, mosaic, model, dummy_img, stim_response = 1, seed = None, alpha_white = False):
     '''
     simulates a phosphene with a given radius
     '''
@@ -106,7 +106,7 @@ def phosphene_simulation(radius, mosaic, model, dummy_img, stim_response = 1, se
     
     # create a blank map for cell responses 
     
-    img_h, img_w = dummy_img.img_shape[0], dummy_img.img_shape[1]
+    img_h, img_w = dummy_img.shape[0], dummy_img.shape[1]
     mosaic_h, mosaic_w = mosaic.grid.shape[0], mosaic.grid.shape[1]
     bipolar_cell_responses = np.zeros((mosaic_h, mosaic_w))
     # get the center of the image
@@ -138,7 +138,7 @@ def phosphene_simulation(radius, mosaic, model, dummy_img, stim_response = 1, se
 
     missing_avgs = []
     # extract features
-    features_array = extract_features(bip, return_labels = False)
+    features_array = extract_features(bip, return_labels = False, alpha_white = alpha_white)
     # manually change blue to black ?
     # run these features through model to get y_pred
     y_pred = model.predict(features_array[:,2:])
