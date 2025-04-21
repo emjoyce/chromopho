@@ -72,43 +72,87 @@ class BipolarImageProcessor:
                 img_cutout_j_range = [int((img_centerpt[1]-img_cutout_dim[1]/2)-1), int(img_centerpt[1]+img_cutout_dim[1]//2-1)]
             # now assign squsare of pixels as receptive field of each cell in the mosaic
             mapping = {}     
-            # TODO: using a list is slow, refactor 
-            available_pixel_inds = [(i,j) for i in range(img_cutout_i_range[0], img_cutout_i_range[1]) for j in range(img_cutout_j_range[0], img_cutout_j_range[1])]
-            # chop these available_pixel_inds 
+
+            # Loop through the mosaic grid
             for i in range(mosaic_height):
                 for j in range(mosaic_width):
-                    # if this i,j location does not have a cell in the mosaic, skip
-                    # the square of pixels will be square_dim x square_dim per i,j element in the mosaic
-                    # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
-                    # get the first dim pixels in available_pixel_inds
-                    # first get j indices of the first square_dim pixels 
-                    js = np.array(available_pixel_inds[:square_dim])[:,1]
-                    j_inds = [j for j in js if j >= 0 and j < img_width]
-                    # iterate through the first square_dim i indices and assign the i,j pairs and remove them from available_pixel_inds
-                    # first i ind starts at first i in available_pixel_inds
-                    first_i = available_pixel_inds[0][0]
-                    i_inds = list(range(first_i, min(first_i+square_dim, img_height)))
-                    rec_field = [(ii,jj) for ii in i_inds for jj in j_inds]
+                    # Skip if no cell at this point in mosaic
+                    if self.mosaic.grid[i, j] == -1:
+                        continue
 
-                    # now get the diagonal 'radius' of cube 
-                    
-                    # remove the pixels that have been assigned
-                    [available_pixel_inds.remove(rec_field[i]) for i in range(len(rec_field))]
-                    # if there is not a cell in the mosaic here, dont add anythign to the mapping
-                    # TODO: is this is also innefficient to do this after all this computation^ 
-                    if self.mosaic.grid[i,j] == -1:
-                        continue # without adding anything to the mapping
-                    # now have to 'circleify' the square of pixels
+                    # Calculate pixel 'block' boundaries
+                    start_row = img_cutout_i_range[0] + i * square_dim
+                    end_row = min(start_row + square_dim, img_height)
+                    start_col = img_cutout_j_range[0] + j * square_dim
+                    end_col = min(start_col + square_dim, img_width)
+
+                    # Build receptive field pixel indices
+                    rec_field = [
+                        (r, c)
+                        for r in range(start_row, end_row)
+                        for c in range(start_col, end_col)
+                        if 0 <= r < img_height and 0 <= c < img_width
+                    ]
+
+                    # Optionally circleify the receptive field
                     if not return_minimum:
                         rec_field = self._square_to_circle_pixels(rec_field, i, j)
-                    
+
+                    # Save the mapping
                     mapping[(i, j)] = rec_field
 
 
-
-        else: # TODO: do this ^ but for fit_image
+        # else: # TODO: do this ^ but for fit_image
+        elif self.fit_option == 'fit_image':
             raise ValueError('functionality for fit_image not yet implemented :.(')
         self._receptive_field_map = mapping
+
+
+
+
+
+
+
+
+
+
+        #     # TODO: using a list is slow, refactor 
+        #     available_pixel_inds = [(i,j) for i in range(img_cutout_i_range[0], img_cutout_i_range[1]) for j in range(img_cutout_j_range[0], img_cutout_j_range[1])]
+        #     # chop these available_pixel_inds 
+        #     for i in range(mosaic_height):
+        #         for j in range(mosaic_width):
+        #             # if this i,j location does not have a cell in the mosaic, skip
+        #             # the square of pixels will be square_dim x square_dim per i,j element in the mosaic
+        #             # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
+        #             # get the first dim pixels in available_pixel_inds
+        #             # first get j indices of the first square_dim pixels 
+        #             js = np.array(available_pixel_inds[:square_dim])[:,1]
+        #             j_inds = [j for j in js if j >= 0 and j < img_width]
+        #             # iterate through the first square_dim i indices and assign the i,j pairs and remove them from available_pixel_inds
+        #             # first i ind starts at first i in available_pixel_inds
+        #             first_i = available_pixel_inds[0][0]
+        #             i_inds = list(range(first_i, min(first_i+square_dim, img_height)))
+        #             rec_field = [(ii,jj) for ii in i_inds for jj in j_inds]
+
+        #             # now get the diagonal 'radius' of cube 
+                    
+        #             # remove the pixels that have been assigned
+        #             [available_pixel_inds.remove(rec_field[i]) for i in range(len(rec_field))]
+        #             # if there is not a cell in the mosaic here, dont add anythign to the mapping, but still needed to remove first 
+        #             # TODO: is this is also innefficient to do this after all this computation^ 
+        #             if self.mosaic.grid[i,j] == -1:
+        #                 continue # without adding anything to the mapping
+        #             # now have to 'circleify' the square of pixels
+        #             if not return_minimum:
+        #                 rec_field = self._square_to_circle_pixels(rec_field, i, j)
+                    
+        #             mapping[(i, j)] = rec_field
+
+
+
+        # else: # TODO: do this ^ but for fit_image
+        #     raise ValueError('functionality for fit_image not yet implemented :.(')
+        # self._receptive_field_map = mapping
 
     def _square_to_circle_pixels(self, square_pixels, i, j):
         """
@@ -128,24 +172,27 @@ class BipolarImageProcessor:
             # these need to have scale manually scaled up to a minimum value or else turning into circle will have no effect
             # and we want overlapping to result from this circle-fication!
             scale_min = {1:10, 2:2.5, 3:1.5, 4:1.3, 5:1.2, 6:1.1, 7:1.1} 
-            if scale < scale_min[self._minimum_overlap_square_dim]:
-                scale = scale_min[self._minimum_overlap_square_dim]
-        # get square's bounding box
-        rows = [pix[0] for pix in square_pixels]
-        cols = [pix[1] for pix in square_pixels]
-        row_min, row_max = min(rows), max(rows)
-        col_min, col_max = min(cols), max(cols)
+            scale = max(scale, scale_min[self._minimum_overlap_square_dim])
+
+        square_pixels = np.array(square_pixels)
+        rows, cols = square_pixels[:, 0], square_pixels[:, 1]
         
-        # find the circle’s center and radius via diagonal of square
+        
+        # get square's bounding box
+        row_min, row_max = rows.min(), rows.max()
+        col_min, col_max = cols.min(), cols.max()
         center_row = (row_min + row_max) / 2.0
         center_col = (col_min + col_max) / 2.0
+        
+        # find the circle’s center and radius via diagonal of square
         height = row_max - row_min
         width  = col_max - col_min
         half_diag = np.sqrt(height**2 + width**2) / 2.0
         if half_diag == 0: # this is for the case where the square is just one pixel
             half_diag = .1
         radius = half_diag * scale  
-        
+
+
         # add the pixels
         circle_pixels = []
         row_start = max(int(center_row - radius - 1), 0)
@@ -155,10 +202,9 @@ class BipolarImageProcessor:
         for r in range(row_start, row_end + 1):
             if r <= self.image.shape[0] and r > 0:
                 for c in range(col_start, col_end + 1):
-                    if c <= self.image.shape[1] and c > 0:
-                        dist_sq = (r - center_row)**2 + (c - center_col)**2
-                        if dist_sq <= radius**2:
-                            circle_pixels.append((r, c))
+                    dist_sq = (r - center_row)**2 + (c - center_col)**2
+                    if dist_sq <= radius**2:
+                        circle_pixels.append((r, c))
 
         return circle_pixels
 
@@ -265,24 +311,35 @@ class BipolarImageProcessor:
         for subtype in self.mosaic.subtypes:
             subtype_index = self.mosaic.subtype_index_dict[subtype.name]
             # get the map of mosaic cell: image pixels
-            rec_fields = self._receptive_field_map
             # remove the cells that are not of the specified subtype
-            rec_fields = {cell: pixels for cell, pixels in rec_fields.items() if self.mosaic.grid[cell] == subtype_index}
+            rec_fields = {cell: pixels for cell, pixels in self._receptive_field_map.items() 
+                                if self.mosaic.grid[cell] == subtype_index}
             # get the map that has mosaic cell: average color
             avg_color_map = self.avg_colors_cell_map
 
             # now create pixel:avg_color(s) dict 
             # defaultdict wont return an error but will create a new empty list if the key is not found already for a given pixel
             pixel_to_avg_colors = defaultdict(list)
-
-            for cell, pixels in rec_fields.items():
+            
+            # helper function for parallel computation of colors in get_avg_color_map_per_pixel
+            def _gather_pixel_avgcolor_pairs(cell_and_pixels):
+                cell, pixels = cell_and_pixels
                 avg_color = avg_color_map[cell]
+                results = []
                 for pixel in pixels:
-                    pixel_to_avg_colors[pixel].append(avg_color)
+                    if pixel[0] < self.image.shape[0] and pixel[1] < self.image.shape[1]:
+                        results.append((pixel, avg_color))
+                return results
+
+            # parallel compute the pixel:avg_color pairs
+            with ThreadPoolExecutor() as executor:
+                for results in executor.map(_gather_pixel_avgcolor_pairs, rec_fields.items()):
+                    for pixel, avg_color in results:
+                        pixel_to_avg_colors[pixel].append(avg_color)
 
             # now a second dict for pixel: average of the average colors
             pixel_to_final_avg = {
-                pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items() if pixel[0] < self.image.shape[0] and pixel[1] < self.image.shape[1]}
+                pixel: np.mean(colors, axis=0) for pixel, colors in pixel_to_avg_colors.items()}
             
             
             self.avg_subtype_response_per_pixel[subtype.name] = pixel_to_final_avg

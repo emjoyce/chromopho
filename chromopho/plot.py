@@ -277,3 +277,18 @@ def plot_average_color_rec_field(bipolar_img, subtype_name, ax=None, show_ax = F
         ax.axis('off')
     ax.imshow(final_img)
 
+def features_img(feats, w, h):
+    '''
+    generates image from vector of features of each bipolar subtype response 
+    
+    '''
+    # make a len(feats)-2 x 1 array of images
+    fig, ax = plt.subplots(1, feats.shape[1]-2, figsize=(20, 20))
+    i_inds = feats.T[0].astype(int)
+    j_inds = feats.T[1].astype(int)
+    for i, type_feats in enumerate(feats.T[2:]):
+        # make an empty image of 0s 
+        img = np.ones((w,h,3))
+        # this will be gray, with same values in r, g, b
+        img[i_inds, j_inds] = np.stack([type_feats]*3, axis=1)
+        ax[i].imshow(img)

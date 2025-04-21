@@ -4,6 +4,7 @@ import joblib
 from collections import defaultdict
 from skimage.metrics import structural_similarity as ssim
 from sklearn.linear_model import Ridge, RidgeCV
+from sklearn.kernel_ridge import KernelRidge
 from .feature_extraction import extract_features
 from .bipolar_image import BipolarImageProcessor
 from sklearn.model_selection import KFold
@@ -28,8 +29,9 @@ def train_model(X, Y):
     model.fit(X, Y)
     return model
 
-def train_model_cv(X_train, y_train, alphas=None, k=5):
-
+def train_model_cv(X_train, y_train, alphas=None):
+    # hard coded for now
+    k=5
 
     if alphas is None:
         alphas = [0.1, 1.0, 10.0, 100.0] 
@@ -48,6 +50,16 @@ def train_model_cv(X_train, y_train, alphas=None, k=5):
 
     return model
 
+
+def train_model_kernel_ridge(X_train, y_train, alpha=1.0, kernel='rbf', gamma=None):
+    X = X_train[:, 2:]
+    Y = y_train[:, 2:]
+
+    model = KernelRidge(alpha=alpha, kernel=kernel, gamma=gamma)
+    model.fit(X, Y)
+
+    return model
+
 def evaluate_ssim(y, y_pred):
     return ssim(y, y_pred, channel_axis = -1, data_range = 1)
 
@@ -62,7 +74,7 @@ def generate_img_from_feats(feats, model, img_h, img_w, output_groundtruth = Non
     y_pred_img = np.zeros((img_h, img_w, 3)) # output will be r,g,b
     if output_groundtruth is not None:
         y_img = np.zeros((img_h, img_w, 3))
-    for i, (x, y, t1,t2,t3,t4,t5,t6) in enumerate(feats):
+    for i, (x, y) in enumerate(feats[:,:2]):
 
         # I need to take the value at y_pred at a pixel index and put it in y_pred_img 
         # the indices of y_pred are the same as the indices of Xs_test so I should just be able to match via i
@@ -88,7 +100,6 @@ def evaluate_model_image(model, Xs_test, Ys_test, img_h, img_w, return_sim = Fal
 
     
     # now get the ssim score
-    # TODO : this is not working, need to debug
     if return_sim:
         ssim_score = evaluate_ssim(y_img, y_pred_img)
         #print(f'SSIM: {ssim_score}')
