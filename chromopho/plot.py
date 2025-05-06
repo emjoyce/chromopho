@@ -111,8 +111,7 @@ def graph_receptive_fields(bipolar_img, img, subtypes=None, filter=None, ax=None
     
     if ax is None:
         fig, ax = plt.subplots()
-    
-    ax.imshow(new_img)
+    ax.imshow(new_img[...,:3])
     
     if title:
         ax.set_title(title)
@@ -163,13 +162,17 @@ def bipolar_image_filter_rgb(
     center_sigma=1.0,
     surround_sigma=3.0,
     alpha_center=1.0,
-    alpha_surround=0.8,
+    alpha_surround=0.4,
     rgb_to_lms = np.array([
         [0.313, 0.639, 0.048],  # L
         [0.155, 0.757, 0.088],  # M 
         [0.017, 0.109, 0.874]]),   # S 
     default_value = [0.5,0.5,0.5], 
-    method = 'lms'):
+    method = 'lms',
+    rec_kind='softplus', 
+    rec_r0=0.05, 
+    rec_alpha=0.05, 
+    rec_beta=7.5):
     """
     Returns an rbg image showing how a center-surround bipolar cell would
     respond in color space. 
@@ -206,11 +209,11 @@ def bipolar_image_filter_rgb(
         center_img[..., channel] = gaussian_filter(center_img[..., channel], center_sigma)
         surround_img[..., channel] = gaussian_filter(surround_img[..., channel], surround_sigma)
 
-    # combine center and surround into one image
-    final_lms = alpha_center * center_img + alpha_surround * surround_img
+    
     
     if method == 'lms':
-
+        # combine center and surround into one image
+        final_lms = alpha_center * center_img + alpha_surround * surround_img
         # make a baseline rgb image, defaults baseline to gray
         baseline_lms = np.array(default_value)
 
@@ -245,15 +248,33 @@ def bipolar_image_filter_rgb(
         # subtract the two to get the output
 
         # just add cause one should be -
-        output = avg_center+avg_surround
+        output = alpha_center*avg_center+alpha_surround*avg_surround 
         # need to normalize, but not in a way that would 
         # example - if i have an image of all yellow, i want the response to be different for each cone type 
         # so I wont normalize to 0-1, but I will normalize to the range of the output
         # so what is the theoretical max and min here? -1 to 1 right? 
         # ok: normalize to make -1 0 and 1 1 
         # TODO: this might be better as sigmoid or something 
-        output = (output + 1)/2
-        #output = (output - output.min())/(output.max()-output.min())
+
+        # output = (output + 1)/2
+        # ok this is what it needs to be, Half-wave rectification: 
+        def rectifier(x, kind='baseline', r0=0.05, alpha=0.05, beta=15.0):
+            """
+            Returns a softened ON and OFF pair for a linear signal *x*.
+            """
+            if kind == 'baseline':      
+                output  = np.maximum(0, x) + r0
+            elif kind == 'leaky':       
+                output  = np.where(x>0, x, alpha*x)
+            elif kind == 'softplus':    
+                soft = lambda z: np.log1p(np.exp(beta*z))/beta
+                output = soft(x)
+
+            else:
+                raise ValueError("kind must be 'baseline', 'leaky', or 'softplus'")
+            return output
+
+        output = rectifier(output, kind=rec_kind, r0=rec_r0, alpha=rec_alpha, beta=rec_beta)
 
         return output
 
@@ -292,3 +313,32 @@ def features_img(feats, w, h):
         # this will be gray, with same values in r, g, b
         img[i_inds, j_inds] = np.stack([type_feats]*3, axis=1)
         ax[i].imshow(img)
+
+
+def graph_phosphenes(i, j, model, radius=5, stim_response=1, tensor_model = True, smooth = True):
+    dummy_img = np.zeros((400, 400, 3))
+    fig, axes = plt.subplots(i, j, figsize=(i*10, j*10))
+
+    for (seed, ix, jx) in [(idx, x, y) for idx, (x, y) in enumerate((a, b) for a in range(i) for b in range(j))]:
+        
+        # phosphene simulation from this model
+        phosphene_stim_percept = chromopho.model.phosphene_simulation(
+            radius=radius,
+            mosaic=mosaic,
+            model=model,
+            dummy_img=dummy_img,
+            stim_response=stim_response,
+            seed=seed,
+            tensor_model = tensor_model,
+            smooth = True
+        )
+        
+        # remove blue background
+        # blue_mask = (phosphene_stim_percept[...,0] == 0) & (np.isclose(phosphene_stim_percept[...,1], 0.847, atol=1e-3))  & (phosphene_stim_percept[...,2] == 1)
+        # test_p = phosphene_stim_percept.copy()
+        # test_p[blue_mask] = np.array([0,0,0])
+        
+        axes[ix, jx].imshow(phosphene_stim_percept)
+        axes[ix, jx].axis('off')  # optional, make it cleaner
+
+    plt.tight_layout()

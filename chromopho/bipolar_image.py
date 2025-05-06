@@ -245,7 +245,11 @@ class BipolarImageProcessor:
                         surround_sigma = rf_params['surround_sigma'],
                         alpha_center = rf_params['alpha_center'],
                         alpha_surround = rf_params['alpha_surround'],
-                        rgb_to_lms = rgb_to_lms,   # S 
+                        rec_kind=rf_params['rec_kind'], 
+                        rec_r0=rf_params['rec_r0'], 
+                        rec_alpha=rf_params['rec_alpha'], 
+                        rec_beta=rf_params['rec_beta'],
+                        rgb_to_lms = rgb_to_lms,   
                         default_value = default_value, 
                         method = method)
                 # so the image should output a single value dependign on subtype, which if s+, would be the output of l cones minue the output of m+l
@@ -343,42 +347,6 @@ class BipolarImageProcessor:
             
             
             self.avg_subtype_response_per_pixel[subtype.name] = pixel_to_final_avg
-
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            
-
-
-
-
-
-
-
 
 
 

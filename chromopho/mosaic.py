@@ -35,10 +35,23 @@ class BipolarSubtype:
             raise ValueError(f"rf_size must be between greater than 1 for subtype '{self.name}'")
 
         self.color_filter_params = color_filter_params
-        if rf_params is None:
-            self.rf_params = {'center_sigma':1.0, 'surround_sigma':3.0, 'alpha_center':1.0, 'alpha_surround':0.8}
-        else:
-            self.rf_params = rf_params
+        _defaults = {
+            'center_sigma':    1.0,
+            'surround_sigma':  3.0,
+            'alpha_center':    1.0,
+            'alpha_surround':  0.8,
+            'rec_kind':       'softplus',
+            'rec_r0':          0.1,
+            'rec_alpha':      0.05,
+            'rec_beta':       7.5,
+        }
+
+        params = rf_params or {}
+
+        for key, val in _defaults.items():
+            params.setdefault(key, val)
+
+        self.rf_params = params
         
 
     # def get_receptive_field_size(self, rf_params, eccentricity = None): # TODO: TEST 
@@ -60,7 +73,7 @@ class BipolarMosaic:
     Creates a mosaic of bipolar cells with different subtypes.
     """
     def __init__(self, num_cells, shape = 'rectangle', width = None, height = None, 
-                    radius = None, eccentricity = None, subtypes = None):
+                    radius = None, eccentricity = None, subtypes = None, optimize_t = 45):
         """
         Parameters:
         num_cells (int): approximate number of bipolar cells in the mosaic. note that this number will be 
@@ -80,6 +93,7 @@ class BipolarMosaic:
         self.width = width
         self.height = height
         self.radius = radius
+        self._optimize_t = optimize_t
         self.num_cells = num_cells
         self.subtypes = subtypes if subtypes else []
         self.subtype_index_dict = {st.name: i+1 for i, st in enumerate(self.subtypes)}
@@ -96,6 +110,8 @@ class BipolarMosaic:
             self.radius = self._best_shape()
             self.grid = self._generate_circlular_grid()
             self._apply_tiling()
+            for i in range(self._optimize_t):                  
+                self.optimize_mosaic_iteration()
         self._generate_receptive_field_matrix()
         
 
@@ -173,6 +189,68 @@ class BipolarMosaic:
             random_subtypes = np.random.choice([ind for ind in self._index_to_subtype_dict.keys() if ind != -1], remaining_cells)
             self.grid[remaining_slots[:, 0], remaining_slots[:, 1]] = random_subtypes
             filled_slots = np.vstack([filled_slots, remaining_slots])
+
+
+    def optimize_mosaic_iteration(self, p: float = 0.1) -> None:
+        """
+        Perform one iteration of subtype tiling distance optimization by swapping p% of cells.
+
+        Parameters
+        ----------
+        p : float
+            Fraction of all valid cells to randomly consider for swapping this iteration.
+
+        Returns
+        -------
+        None
+            replaces self.grid with new grid with swapped cells.
+        """
+        # gather coordinates of the grid that contain a cell (not -1)
+        cell_coords = np.argwhere(self.grid != -1)
+        n = len(cell_coords)
+        if n == 0:
+            return
+
+        # number of cells up for swapping this iteration
+        k = int(np.ceil(p * n))
+        chosen = cell_coords[np.random.choice(n, k, replace=False)]
+
+        # helper: mean distance from a cell's pos to all coords in group
+        def mean_dist(pos, group):
+            return np.mean(np.linalg.norm(group - pos, axis=1))
+
+        # iterate over chosen cells 
+        for (r1, c1) in chosen:
+            s1 = self.grid[r1, c1]
+            # all other coords of this subtype
+            same1 = np.argwhere(self.grid == s1)
+            same1 = same1[~np.all(same1 == (r1, c1), axis=1)]
+            if same1.size == 0:
+                continue
+
+            # pick a random partner of different subtype
+            mask = (self.grid != s1) & (self.grid != -1)
+            others = np.argwhere(mask)
+            if others.size == 0:
+                continue # break out if all same subtyoe
+            r2, c2 = others[np.random.randint(len(others))]
+            s2 = self.grid[r2, c2]
+
+            # coords for subtype s2 
+            same2 = np.argwhere(self.grid == s2)
+            same2 = same2[~np.all(same2 == (r2, c2), axis=1)]
+            if same2.size == 0:
+                continue
+
+            # compute pre‐ and post‐swap dispersion
+            old1 = mean_dist((r1, c1), same1)
+            new1 = mean_dist((r2, c2), same1)
+            old2 = mean_dist((r2, c2), same2)
+            new2 = mean_dist((r1, c1), same2)
+
+            # if total dispersion increases, swap cell locations
+            if (new1 + new2) > (old1 + old2):
+                self.grid[r1, c1], self.grid[r2, c2] = s2, s1
 
     def _generate_receptive_field_matrix(self):
         """

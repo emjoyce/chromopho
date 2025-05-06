@@ -7,7 +7,7 @@ from .utils import save_structured_features
 import matplotlib.pyplot as plt
 
 def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_edge_type = True,
-                        trim_perc = .95):
+                        trim_perc = .95, smooth = True):
     
     '''
     trim perc is the percentage of the m_off x range / 2 to use as new radius 
@@ -66,28 +66,29 @@ def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_ed
                 features_array[i, 0] = px
                 features_array[i, 1] = py
                 features_array[i, subtype_idx + 2] = value
-
-    # Handle missing values (-1 fill for pixels not seen by some subtypes)
-    missing_mask = (features_array[:, 2:] == 0)  # everything initialized to 0, missing is still 0
-    features_array[:, 2:][missing_mask] = -1  # mark missing as -1
-
     # Step 3: Fill labels if needed
     if return_labels:
         for i, (px, py) in enumerate(pixels_seen):
             labels_array[i, 0] = px
             labels_array[i, 1] = py
             labels_array[i, 2:] = rgb_img[px, py]
+    if smooth:
+        # Handle missing values (-1 fill for pixels not seen by some subtypes)
+        missing_mask = (features_array[:, 2:] == 0)  # everything initialized to 0, missing is still 0
+        features_array[:, 2:][missing_mask] = -1  # mark missing as -1
 
-    # Impute missing values 
-    for j in range(2, features_array.shape[1]):
-        missing = np.where(features_array[:, j] == -1)[0]
-        for i in missing:
-            px, py = features_array[i, 0], features_array[i, 1]
-            # Pull out neighbors
-            mask = (np.abs(features_array[:, 0] - px) <= 2) & (np.abs(features_array[:, 1] - py) <= 2)
-            neighbors = features_array[mask, j]
-            neighbors = neighbors[neighbors != -1]
-            features_array[i, j] = np.mean(neighbors) if len(neighbors) > 0 else 0
+
+
+        # Impute missing values 
+        for j in range(2, features_array.shape[1]):
+            missing = np.where(features_array[:, j] == -1)[0]
+            for i in missing:
+                px, py = features_array[i, 0], features_array[i, 1]
+                # Pull out neighbors
+                mask = (np.abs(features_array[:, 0] - px) <= 2) & (np.abs(features_array[:, 1] - py) <= 2)
+                neighbors = features_array[mask, j]
+                neighbors = neighbors[neighbors != -1]
+                features_array[i, j] = np.mean(neighbors) if len(neighbors) > 0 else 0
 
     return (features_array, labels_array) if return_labels else features_array
 
