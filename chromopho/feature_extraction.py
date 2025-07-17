@@ -1,13 +1,15 @@
 import numpy as np
 import os 
 
+from scipy.ndimage import gaussian_filter
+
 from .mosaic import BipolarMosaic
 from .bipolar_image import BipolarImageProcessor
 from .utils import save_structured_features
 import matplotlib.pyplot as plt
 
 def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_edge_type = True,
-                        trim_perc = .95, smooth = True):
+                        trim_perc = .95, smooth = True, gaussian_blur = False):
     
     '''
     trim perc is the percentage of the m_off x range / 2 to use as new radius 
@@ -18,6 +20,7 @@ def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_ed
     # Step 1: collect all unique pixel locations
     pixels_seen = sorted(set().union(*[sub_d.keys() for sub_d in avg_response_dict.values()]))
     # trim the edges if trim_edge_type is not None
+    # cookie-cuts the final seen image so the edge isnt composed of many receptive field circular edges
     if trim_edge_type is True:
         center_x, center_y = np.array(bipolar_img.image.shape[:2]) // 2
         # measure the radius of this image 
@@ -37,13 +40,11 @@ def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_ed
         pixels_seen = [tuple(px) for px in pixels_seen_arr[mask]]
 
 
-
-
     n_pixels = len(pixels_seen)
     n_subtypes = len(avg_response_dict)
     features_array = np.zeros((n_pixels, n_subtypes + 2))  # +2 for x and y
 
-    # Optional: handle labels
+    # handle labels if needed
     if return_labels:
         labels_array = np.zeros((n_pixels, 5))  # x, y, r, g, b
         rgb_img = bipolar_img.image
@@ -56,7 +57,7 @@ def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_ed
     subtypes = sorted(avg_response_dict.keys())
     missing_indices = []  # will store (i, j)
 
-    # Step 2: Fill feature and label arrays
+    # fill features and labels
     pixel_index = {pixel: idx for idx, pixel in enumerate(pixels_seen)}  # faster lookup
     for subtype_idx, subtype in enumerate(subtypes):
         subtype_dict = avg_response_dict[subtype]
@@ -66,7 +67,7 @@ def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_ed
                 features_array[i, 0] = px
                 features_array[i, 1] = py
                 features_array[i, subtype_idx + 2] = value
-    # Step 3: Fill labels if needed
+
     if return_labels:
         for i, (px, py) in enumerate(pixels_seen):
             labels_array[i, 0] = px
@@ -89,6 +90,27 @@ def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_ed
                 neighbors = features_array[mask, j]
                 neighbors = neighbors[neighbors != -1]
                 features_array[i, j] = np.mean(neighbors) if len(neighbors) > 0 else 0
+    
+    if gaussian_blur:
+        h, w = bipolar_img.image.shape[:2]
+        coords = features_array[:, :2].astype(int)
+        for j in range(2, features_array.shape[1]):  
+            # blank grid
+            grid = np.full((h, w), np.nan)
+
+            # assign subtype values to their x, y coords
+            x_idx, y_idx = coords[:, 0], coords[:, 1]
+            grid[x_idx, y_idx] = features_array[:, j]
+
+            # mask NaNs, blur only real values which are ones that have a cell
+            nan_mask = np.isnan(grid)
+            grid[nan_mask] = 0  
+            blurred = gaussian_filter(grid, sigma=1)
+            # re-mask after blur
+            blurred[nan_mask] = np.nan  
+
+            # put in blurred values
+            features_array[:, j] = blurred[x_idx, y_idx]
 
     return (features_array, labels_array) if return_labels else features_array
 

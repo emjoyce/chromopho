@@ -1,5 +1,8 @@
 import numpy as np
 from matplotlib.colors import ListedColormap
+from scipy.ndimage import gaussian_filter
+from scipy.spatial import cKDTree
+
 
 
 class BipolarSubtype:
@@ -110,8 +113,8 @@ class BipolarMosaic:
             self.radius = self._best_shape()
             self.grid = self._generate_circlular_grid()
             self._apply_tiling()
-            for i in range(self._optimize_t):                  
-                self.optimize_mosaic_iteration()
+            print('density swap')
+            self.grid = self._density_swap()
         self._generate_receptive_field_matrix()
         
 
@@ -190,67 +193,143 @@ class BipolarMosaic:
             self.grid[remaining_slots[:, 0], remaining_slots[:, 1]] = random_subtypes
             filled_slots = np.vstack([filled_slots, remaining_slots])
 
+    # optimization function for spreading out each subtype more evenly within mosaic
+    def _density_swap(bipolar_mosaic, percent_swapped = .07, sigma = .88, max_iter = 1000, track_obj = False, objective_by_type = False,
+                                window = 150, epsilon = .005):
+        #######################################################################
+        ### helper funcs:
+        def get_extreme_density_coords(smoothed, n_pairs):
+            # finds maching number of high density and low density points 
+            
+            valid_mask = smoothed >= 0
+            flat_smoothed = smoothed[valid_mask]
+            valid_coords = np.argwhere(valid_mask)
+        
+            # get top and bottom n_pairs indicies
+            top_idx_unsorted = np.argpartition(flat_smoothed, -n_pairs)[-n_pairs:]
+            top_idx = top_idx_unsorted[np.argsort(flat_smoothed[top_idx_unsorted])[::-1]]
+            bottom_idx_unsorted = np.argpartition(flat_smoothed, n_pairs)[:n_pairs]
+            bottom_idx = bottom_idx_unsorted[np.argsort(flat_smoothed[bottom_idx_unsorted])]
+        
+            # convert to coords
+            top_coords = valid_coords[top_idx]
+            bottom_coords = valid_coords[bottom_idx]
+        
+            # filter out neighbors
+            top_coords = filter_out_neighbors(top_coords)
+            bottom_coords = filter_out_neighbors(bottom_coords)
+        
+            # now, make sure to return the same number of elements so they can be paired up for swapping later
+            n_elements = min(len(top_coords), len(bottom_coords))
+            
+            return top_coords[:n_elements], bottom_coords[:n_elements]
+        
+        def filter_out_neighbors(coords):
+            # helper function for get_extreme_density_coords, where we will make sure our candidates are not neighbors before swapping
+            # this prevents moving too many cells to a low density area, which would just create another high density area
+            kept_coords = []
+            excluded = set()
+        
+            for coord in coords:
+                c = tuple(coord)
+                if c in excluded:
+                    continue
+                kept_coords.append(c)
+                # add neighbors to excluded
+                x, y = c
+                excluded.update([c, (x+1, y), (x-1, y), (x, y+1), (x, y-1), (x+1, y+1), (x+1, y-1), (x-1, y+1), (x-1, y-1)])
+        
+            return np.array(kept_coords)
+        
+        
+        def get_sigma_it(it, max_iter, sigma_start, floor = .5, p = 2):
+            progress = it / max_iter
+            decay = floor + (1-floor)*(1 - progress**p)
+            return sigma_start * decay
+        
+        def test_stop(objective_history, window = 75, epsilon = .001):
+            # checks if the objective is still making reasonable progress compared to the recent history 
+        
+            # dont stop if we don't have enough history collected
+            if len(objective_history) <  window:
+                return False
+            recent_avg = np.mean(objective_history[-window:])
+            current_val = objective_history[-1]
+            return abs(current_val - recent_avg) < epsilon
+            
+        def get_smoothed_density(bipolar_grid, target_subtype, sigma = 2):
+        
+            # get a mask of valid cells 
+            nonviable_mask = bipolar_grid == -1
+            # mask of cells of the subtype 
+            subtype_mask = (bipolar_grid == target_subtype).astype(float)
+        
+            smoothed = gaussian_filter(subtype_mask, sigma = sigma)
+        
+            smoothed[nonviable_mask] = -1
+            # also return the number of cells in that subtype for later on, when we use this function. 
+            # prevents us from calculating this value twice 
+            return smoothed, np.sum(subtype_mask)
+        
+        def total_objective(grid, per_subtype = False):
+            subtypes = np.unique(grid)
+            # exclude -1, which indicates a blank cell
+            subtypes = subtypes[subtypes > 0]
+        
+            total_objective = 0
+        
+            if per_subtype:
+                obj_list = []
+            for subtype in subtypes:
+                coords = np.argwhere(grid == subtype)
+                tree = cKDTree(coords)
+                # k = 2 to skip self
+                dists, _ = tree.query(coords, k = 2)
+                nearest_dists = dists[:,1]
+                if per_subtype:
+                    obj_list.append(np.sum(nearest_dists)/len(np.argwhere(grid == subtype)))
+                else:
+                    # add average value per cell of the given subtype
+                    total_objective += np.sum(nearest_dists)/len(np.argwhere(grid == subtype))
+            if per_subtype:
+                return obj_list
+            return total_objective/len(subtypes)
+        ### end helper funcs
+        #######################################################################
 
-    def optimize_mosaic_iteration(self, p: float = 0.1) -> None:
-        """
-        Perform one iteration of subtype tiling distance optimization by swapping p% of cells.
+        
+        # save sigma start for shrinking the sigma later
+        sigma_start = sigma
+        grid = bipolar_mosaic.grid.copy()
+        h, w = grid.shape
+        subtypes = np.unique(grid)
+        subtypes = subtypes[(subtypes > 0)]
+        if track_obj:
+            obj_history = []
 
-        Parameters
-        ----------
-        p : float
-            Fraction of all valid cells to randomly consider for swapping this iteration.
+        for it in range(max_iter):
+            for subtype in subtypes:
+                smoothed, n_subtype = get_smoothed_density(grid, subtype, sigma = sigma)
 
-        Returns
-        -------
-        None
-            replaces self.grid with new grid with swapped cells.
-        """
-        # gather coordinates of the grid that contain a cell (not -1)
-        cell_coords = np.argwhere(self.grid != -1)
-        n = len(cell_coords)
-        if n == 0:
-            return
+                # get the top n% of cells of this subtype
+                n_pairs = int(n_subtype*percent_swapped)
 
-        # number of cells up for swapping this iteration
-        k = int(np.ceil(p * n))
-        chosen = cell_coords[np.random.choice(n, k, replace=False)]
-
-        # helper: mean distance from a cell's pos to all coords in group
-        def mean_dist(pos, group):
-            return np.mean(np.linalg.norm(group - pos, axis=1))
-
-        # iterate over chosen cells 
-        for (r1, c1) in chosen:
-            s1 = self.grid[r1, c1]
-            # all other coords of this subtype
-            same1 = np.argwhere(self.grid == s1)
-            same1 = same1[~np.all(same1 == (r1, c1), axis=1)]
-            if same1.size == 0:
-                continue
-
-            # pick a random partner of different subtype
-            mask = (self.grid != s1) & (self.grid != -1)
-            others = np.argwhere(mask)
-            if others.size == 0:
-                continue # break out if all same subtyoe
-            r2, c2 = others[np.random.randint(len(others))]
-            s2 = self.grid[r2, c2]
-
-            # coords for subtype s2 
-            same2 = np.argwhere(self.grid == s2)
-            same2 = same2[~np.all(same2 == (r2, c2), axis=1)]
-            if same2.size == 0:
-                continue
-
-            # compute pre‐ and post‐swap dispersion
-            old1 = mean_dist((r1, c1), same1)
-            new1 = mean_dist((r2, c2), same1)
-            old2 = mean_dist((r2, c2), same2)
-            new2 = mean_dist((r1, c1), same2)
-
-            # if total dispersion increases, swap cell locations
-            if (new1 + new2) > (old1 + old2):
-                self.grid[r1, c1], self.grid[r2, c2] = s2, s1
+                # pull out coords that are at highest density points and lowest density points 
+                top_coords, bottom_coords = get_extreme_density_coords(smoothed, n_pairs)
+                # now, swap these coords in the grid
+                for (x1, y1), (x2, y2) in zip(top_coords, bottom_coords):
+                    grid[x1, y1], grid[x2, y2] = grid[x2, y2], grid[x1, y1]
+            if track_obj:
+                obj_history.append(total_objective(grid, per_subtype = objective_by_type))
+                # check stopping criteria 
+                if (it+1) % window == 0:
+                    if test_stop(obj_history, window = window, epsilon = epsilon):
+                        print(f'stopping after {it} iterations')
+                        break
+                            
+        if track_obj:
+            return grid, obj_history
+        return grid
 
     def _generate_receptive_field_matrix(self):
         """

@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-import chromopho.mosaic as mosaic
+# import chromopho.mosaic as mosaic
 from scipy.ndimage import gaussian_filter
 from .utils import _parse_cone_string
 from collections import defaultdict
@@ -191,9 +191,10 @@ def bipolar_image_filter_rgb(
         rgb_image = rgb_image[:, :, :3]
     
     # rgb to lms
-    L = np.sum(rgb_image * rgb_to_lms[0], axis=2) 
-    M = np.sum(rgb_image * rgb_to_lms[1], axis=2)
-    S = np.sum(rgb_image * rgb_to_lms[2], axis=2)
+    baseline = 0.5  
+    L = np.sum(rgb_image * rgb_to_lms[0], axis=2) - baseline
+    M = np.sum(rgb_image * rgb_to_lms[1], axis=2) - baseline
+    S = np.sum(rgb_image * rgb_to_lms[2], axis=2) - baseline
 
     # valence/value of lms center/surround
     cL, cM, cS = _parse_cone_string(center_cones)   
@@ -267,15 +268,17 @@ def bipolar_image_filter_rgb(
             elif kind == 'leaky':       
                 output  = np.where(x>0, x, alpha*x)
             elif kind == 'softplus':    
-                soft = lambda z: np.log1p(np.exp(beta*z))/beta
-                output = soft(x)
+                base = np.log1p(np.exp(0)) / beta
+                # soft = lambda z: (np.log1p(np.exp(beta * z)) / beta) - (np.log1p(np.exp(0)) / beta)
+                output = np.log1p(np.exp(beta * x)) / beta - base
 
             else:
                 raise ValueError("kind must be 'baseline', 'leaky', or 'softplus'")
             return output
 
         output = rectifier(output, kind=rec_kind, r0=rec_r0, alpha=rec_alpha, beta=rec_beta)
-
+        r_max = (alpha_center - alpha_surround) * baseline     # with α_center > α_surround
+        output = np.clip(output / r_max, 0, 1)
         return output
 
 
@@ -315,14 +318,20 @@ def features_img(feats, w, h):
         ax[i].imshow(img)
 
 
-def graph_phosphenes(i, j, model, radius=5, stim_response=1, tensor_model = True, smooth = True):
+def graph_phosphenes(i, j, model, mosaic, radius=5, stim_response=1, tensor_model = True, smooth = True, gaussian_blur = False, 
+                        black_encoding =  {-1:0, 1:.55, 2:.45, 3:.55, 4: .45, 5:.55, 6:.45, 7:.45, 8:.55},
+                        random_state = 0):
     dummy_img = np.zeros((400, 400, 3))
     fig, axes = plt.subplots(i, j, figsize=(i*10, j*10))
 
-    for (seed, ix, jx) in [(idx, x, y) for idx, (x, y) in enumerate((a, b) for a in range(i) for b in range(j))]:
-        
+    np.random.seed(random_state)
+    positions = [(x, y) for x in range(i) for y in range(j)]
+    seeds = np.random.randint(0, 1e9, size=len(positions))  
+    for (seed, (ix, jx)) in zip(seeds, positions):
+        # getting around circular import 
+        import chromopho.model as modeling
         # phosphene simulation from this model
-        phosphene_stim_percept = chromopho.model.phosphene_simulation(
+        phosphene_stim_percept = modeling.phosphene_simulation(
             radius=radius,
             mosaic=mosaic,
             model=model,
@@ -330,7 +339,9 @@ def graph_phosphenes(i, j, model, radius=5, stim_response=1, tensor_model = True
             stim_response=stim_response,
             seed=seed,
             tensor_model = tensor_model,
-            smooth = True
+            smooth = smooth,
+            gaussian_blur = gaussian_blur,
+            black_encoding = black_encoding
         )
         
         # remove blue background
