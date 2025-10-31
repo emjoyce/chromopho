@@ -12,7 +12,7 @@ class BipolarImageProcessor:
     dictating if the image should be fit to the mosaic or if the entire image should be seen by the mosaic. 
     """
 
-    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale', stimulation_mosaic = None):
+    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale', stimulation_mosaic = None, save_flat = True):
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
@@ -29,9 +29,10 @@ class BipolarImageProcessor:
         self.fit_option = fit_option
         self.bipolar_images = {}
         self._fit_image_and_mosaic(return_minimum_rf)
-        self.get_all_average_colors(method = method)
-        self.avg_subtype_response_per_pixel = {}
-        self.get_avg_color_map_per_pixel()
+        self.get_all_average_colors(method = method, save_flat = save_flat)
+        if save_flat == False:
+            self.avg_subtype_response_per_pixel = {}
+            self.get_avg_color_map_per_pixel()
 
         # make the receptive field map 
 
@@ -183,7 +184,12 @@ class BipolarImageProcessor:
         col_min, col_max = cols.min(), cols.max()
         center_row = (row_min + row_max) / 2.0
         center_col = (col_min + col_max) / 2.0
-        
+
+        # save the center pos 
+        if not hasattr(self, "_cell_centers"):
+            self._cell_centers = {}
+        self._cell_centers[(i, j)] = (float(center_row), float(center_col))
+
         # find the circle’s center and radius via diagonal of square
         height = row_max - row_min
         width  = col_max - col_min
@@ -220,7 +226,7 @@ class BipolarImageProcessor:
         """
         return self._receptive_field_map[(i, j)]
     
-    def _compute_subtype_image(self, subtype, method = 'lms', default_value = [0.5,0.5,0.5], rgb_to_lms = np.array([[0.313, 0.639, 0.048],  
+    def _compute_subtype_image(self, subtype, method = 'grayscale', default_value = [0.5,0.5,0.5], rgb_to_lms = np.array([[0.313, 0.639, 0.048],  
                             [0.155, 0.757, 0.088], [0.017, 0.109, 0.874]])):
         '''
         computes the ideal image seen by the given subtype
@@ -287,7 +293,7 @@ class BipolarImageProcessor:
     
     # TODO: should rename this to something like bipolar cell output, but currently it can also be used to 
     # output the color info SEEN by each bipolar subtype... need to think about this 
-    def get_all_average_colors(self, method = 'lms'):
+    def get_all_average_colors(self, method = 'grayscale', save_flat = False):
         """
         Returns a dictionary of the average color of the pixels in the receptive field of each cell in the mosaic
         if stimulation mosaic is provided, bipass normal color filter stuff and set each cell's
@@ -307,6 +313,24 @@ class BipolarImageProcessor:
                     avg_colors_cell_map[(i, j)] = np.array([stim_val])
                     
         self.avg_colors_cell_map = avg_colors_cell_map
+
+        if save_flat:
+            if method == 'lms':
+                print('unable to save flat lms output grid, set method to grayscale')
+                return 
+            h, w = self.mosaic.grid.shape
+            # -1 for empty cells (like grid)
+            cell_grid = np.full((h, w), -1.0, dtype=float)
+
+            if avg_colors_cell_map:
+                # vectorized conversion of dict -> index arrays + value array
+                keys = np.array(list(avg_colors_cell_map.keys()), dtype=int)  
+                vals = np.array(list(avg_colors_cell_map.values()), dtype=float)  
+                rows = keys[:, 0]
+                cols = keys[:, 1]
+
+                cell_grid[rows, cols] = vals
+            self.grid_outputs = cell_grid
     
     def get_avg_color_map_per_pixel(self):
         """

@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name = "chromopho",
-    version = "0.0.1",
+    version = "0.0.2",
     author_email = "emjoyce@ucsb.edu",
     description = "a simulation of bipolar subtypes as color filters",
     url = "https://github.com/emjoyce/chromopho.git",

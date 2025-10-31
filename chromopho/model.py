@@ -147,7 +147,8 @@ def evaluate_model_image(model, Xs_test, Ys_test, img_h, img_w, return_sim = Fal
 
 def phosphene_simulation(radius, mosaic, model, dummy_img, stim_response=1, seed=None, alpha_white=False,
                          tensor_model=False, smooth = False, gaussian_blur = False,
-                         black_encoding = {-1:0, 1:.55, 2:.45, 3:.55, 4: .45, 5:.55, 6:.45, 7:.45, 8:.55}):
+                         black_encoding = {-1:0, 1:.55, 2:.45, 3:.55, 4: .45, 5:.55, 6:.45, 7:.45, 8:.55},
+                         save_flat = False):
     '''
     simulates a phosphene with a given radius
     black vec is the vector that represents black in the space of the model 
@@ -174,7 +175,7 @@ def phosphene_simulation(radius, mosaic, model, dummy_img, stim_response=1, seed
             if (i - center_phosphene_x)**2 + (j - center_phosphene_y)**2 <= radius**2:
                 bipolar_cell_responses[i, j] = stim_response
     # now create a BipolarImageProcessor object
-    bip = BipolarImageProcessor(mosaic, dummy_img, stimulation_mosaic = bipolar_cell_responses)
+    bip = BipolarImageProcessor(mosaic, dummy_img, stimulation_mosaic = bipolar_cell_responses, save_flat = save_flat)
     # now run through model to get y_pred
     # need an array with pixel_x, pixel_y, subtype_response vector for each subtype in the order of ordered_subtypes
     avg_response_dict = bip.avg_subtype_response_per_pixel

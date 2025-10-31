@@ -168,7 +168,7 @@ def bipolar_image_filter_rgb(
         [0.155, 0.757, 0.088],  # M 
         [0.017, 0.109, 0.874]]),   # S 
     default_value = [0.5,0.5,0.5], 
-    method = 'lms',
+    method = 'grayscale',
     rec_kind='softplus', 
     rec_r0=0.05, 
     rec_alpha=0.05, 
@@ -210,7 +210,6 @@ def bipolar_image_filter_rgb(
         center_img[..., channel] = gaussian_filter(center_img[..., channel], center_sigma)
         surround_img[..., channel] = gaussian_filter(surround_img[..., channel], surround_sigma)
 
-    
     
     if method == 'lms':
         # combine center and surround into one image
@@ -319,7 +318,7 @@ def features_img(feats, w, h):
 
 
 def graph_phosphenes(i, j, model, mosaic, radius=5, stim_response=1, tensor_model = True, smooth = True, gaussian_blur = False, 
-                        black_encoding =  {-1:0, 1:.55, 2:.45, 3:.55, 4: .45, 5:.55, 6:.45, 7:.45, 8:.55},
+                        black_encoding =  {-1:0, 1:.6, 2:.01, 3:.6, 4: .01, 5:.7, 6:.01, 7:.01, 8:.6},
                         random_state = 0):
     dummy_img = np.zeros((400, 400, 3))
     fig, axes = plt.subplots(i, j, figsize=(i*10, j*10))
@@ -353,3 +352,39 @@ def graph_phosphenes(i, j, model, mosaic, radius=5, stim_response=1, tensor_mode
         axes[ix, jx].axis('off')  # optional, make it cleaner
 
     plt.tight_layout()
+
+
+
+def plot_mosaic_cell_outputs(bipolar_img, method='lms', ax=None, cmap='gray', show_ax=False, amacrine_sigma=1):
+    """
+    Plots the mosaic with each cell colored by its graded response (output).
+    Optionally applies Gaussian blur to simulate amacrine cell smoothing.
+    """
+    mosaic = bipolar_img.mosaic
+    grid = mosaic.grid
+    h, w = grid.shape
+
+    # Get output for each cell
+    # check for bipolar_img.grid_output
+    if hasattr(bipolar_img, 'grid_output'):
+        cell_outputs = bipolar_img.grid_output
+    else:
+        cell_outputs = np.full((h, w), np.nan)
+        for i in range(h):
+            for j in range(w):
+                if grid[i, j] != -1:
+                    cell_outputs[i, j] = bipolar_img.get_average_color_of_cell(i, j, method=method).mean()
+
+    # Apply Gaussian blur if requested
+    if amacrine_sigma is not None:
+        cell_outputs = gaussian_filter(cell_outputs, sigma=amacrine_sigma)
+
+    if ax is None:
+        fig, ax = plt.subplots()
+    im = ax.imshow(cell_outputs, cmap=cmap)
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    if not show_ax:
+        ax.axis('off')
+    ax.set_title('Graded response of each cell in mosaic')
+    return ax
+

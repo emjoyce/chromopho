@@ -8,6 +8,45 @@ from .bipolar_image import BipolarImageProcessor
 from .utils import save_structured_features
 import matplotlib.pyplot as plt
 
+def export_mosaic_output_pipeline(mosaic: BipolarMosaic, image_dir: str, output_dir: str, analysis_complete_dir: str, 
+                                        gaussian_blur = False, gaussian_sigma = 1, verbose = False):
+    '''
+    exports the output of every bipolar cell in the mosaic as a numpy array 
+    '''
+    if verbose:
+        # get the number of .png files
+        num_files = len([filename for filename in os.listdir(image_dir) if '.png' in filename])
+        print(f'Extracting features from {num_files} images in {image_dir}...')
+        file_count = 0 
+
+    for filename in os.listdir(image_dir):            
+        if '.png' in filename:
+            if verbose:
+                file_count += 1
+                # every 5% of files we get through, print the progress
+                if file_count % (num_files // 20) == 0: # change back to 20
+                    print(f'{(file_count/num_files)*100}% of images processed...')
+
+            img_path = os.path.join(image_dir, filename)
+            img = plt.imread(img_path)
+
+            # create a BipolarImageProcessor object
+            bipolar_img = BipolarImageProcessor(mosaic, img, save_flat = True)
+            grid_outputs = bipolar_img.grid_outputs
+            if gaussian_blur is not False:
+                grid_outputs = gaussian_filter(grid_outputs, sigma=gaussian_sigma)
+            
+
+            # save results
+            filename_base = img_path.split('/')[-1].split('.')[0]
+            np.save(os.path.join(output_dir, filename_base + '_mosaic_output.npy'), grid_outputs)
+            # now move the image to the analysis_complete_dir
+            os.rename(img_path, os.path.join(analysis_complete_dir, filename_base+'.png'))
+    
+
+
+
+
 def extract_features(bipolar_img, return_labels=True, alpha_white=False, trim_edge_type = True,
                         trim_perc = .95, smooth = True, gaussian_blur = False):
     
