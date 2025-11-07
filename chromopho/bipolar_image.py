@@ -1,6 +1,6 @@
 import numpy as np
-from .utils import img_to_rgb, _parse_cone_string
-from .plot import bipolar_image_filter_rgb
+from .utils import img_to_rgb, _parse_cone_string, gaussian_blur_reflect_mask
+from .plot import bipolar_image_filter
 import concurrent.futures
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +12,7 @@ class BipolarImageProcessor:
     dictating if the image should be fit to the mosaic or if the entire image should be seen by the mosaic. 
     """
 
-    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale', stimulation_mosaic = None, save_flat = True):
+    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale', stimulation_mosaic = None, save_flat = True, amacrine_sigma_blur=None):
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
@@ -22,14 +22,18 @@ class BipolarImageProcessor:
         method (str): the method to use to compute the average color of the pixels in the receptive field of a cell. avg color could be rgb 
             (lifo coming in from cones) or grayscale (info going out from bipolar cells)
         stimulation_mosaic (array): an array same size as mosaic that holds which cells are stimulated by an electrode and to what intensity level
+        amacrine_sigma_blur (float or None): optional sigma for masked gaussian blur applied to the flattened per-cell outputs
         """
         self.mosaic = mosaic
         self.image = image
         self.stimulation_mosaic = stimulation_mosaic
         self.fit_option = fit_option
         self.bipolar_images = {}
+        # store requested amacrine blur for later use
+        self.amacrine_sigma_blur = amacrine_sigma_blur
+
         self._fit_image_and_mosaic(return_minimum_rf)
-        self.get_all_average_colors(method = method, save_flat = save_flat)
+        self.get_all_average_colors(method = method, save_flat = save_flat, blur_sigma=self.amacrine_sigma_blur)
         if save_flat == False:
             self.avg_subtype_response_per_pixel = {}
             self.get_avg_color_map_per_pixel()
@@ -41,6 +45,8 @@ class BipolarImageProcessor:
         """
         Fits the image and  mosaic in accordance with fit_option 
         returns mapping which has the i,j indices of the mosaic as keys and the pixels in the receptive field of the cell as values
+        Parameters:
+        return_minimum (bool): if True, returns the minimum square receptive field without making it a circle
         """
         # we need to ensure that the image is the same size or larger than the mosaic, as each cell cannot have less than one pixel in its receptive field
         img_height, img_width = self.image.shape[:2]
@@ -188,7 +194,7 @@ class BipolarImageProcessor:
         # save the center pos 
         if not hasattr(self, "_cell_centers"):
             self._cell_centers = {}
-        self._cell_centers[(i, j)] = (float(center_row), float(center_col))
+        self._cell_centers[(i, j)] = (int(float(center_row)), int(float(center_col)))
 
         # find the circle’s center and radius via diagonal of square
         height = row_max - row_min
@@ -226,7 +232,7 @@ class BipolarImageProcessor:
         """
         return self._receptive_field_map[(i, j)]
     
-    def _compute_subtype_image(self, subtype, method = 'grayscale', default_value = [0.5,0.5,0.5], rgb_to_lms = np.array([[0.313, 0.639, 0.048],  
+    def _compute_subtype_image(self, subtype, method = 'grayscale', rgb_to_lms = np.array([[0.313, 0.639, 0.048],  
                             [0.155, 0.757, 0.088], [0.017, 0.109, 0.874]])):
         '''
         computes the ideal image seen by the given subtype
@@ -243,7 +249,7 @@ class BipolarImageProcessor:
             # generate the image seen by the subtype
             # computes more of the cone info coming in 
             # s-on would compute 
-            bipolar_image_seen = bipolar_image_filter_rgb(
+            bipolar_image_seen = bipolar_image_filter(
                         rgb_image = self.image,
                         center_cones = color_filter_dict['center'],
                         surround_cones = color_filter_dict['surround'],
@@ -251,53 +257,82 @@ class BipolarImageProcessor:
                         surround_sigma = rf_params['surround_sigma'],
                         alpha_center = rf_params['alpha_center'],
                         alpha_surround = rf_params['alpha_surround'],
-                        rec_kind=rf_params['rec_kind'], 
-                        rec_r0=rf_params['rec_r0'], 
-                        rec_alpha=rf_params['rec_alpha'], 
-                        rec_beta=rf_params['rec_beta'],
-                        rgb_to_lms = rgb_to_lms,   
-                        default_value = default_value, 
-                        method = method)
+                        apply_rectification=rf_params['apply_rectification'], 
+                        on_threshold=rf_params['on_threshold'], 
+                        on_slope=rf_params['on_slope'], 
+                        off_slope=rf_params['off_slope'],
+                        rgb_to_lms = rgb_to_lms,)
                 # so the image should output a single value dependign on subtype, which if s+, would be the output of l cones minue the output of m+l
 
             self.bipolar_images[subtype.name] = bipolar_image_seen
         return bipolar_image_seen
     
-    # TODO: add a calculation of the center and surround activity of lms based on the receptive field of each bipolar cell 
-    # that will be when use_ideal = False
-    def get_average_color_of_cell(self, i, j, method = 'lms', use_ideal = True):
+    def compute_cell_output(self, i, j, method = 'grayscale'):
         """
-        Returns the average color of the pixels in the receptive field of the cell at i,j location of cell mosaic 
+        Computes the output of the cell at i,j by picking the output of the center pixel of its receptive field after DoG
+        Parameters:
+        i (int): row index of cell in mosaic
+        j (int): column index of cell in mosaic
+        method (str): method to use to compute the average color of the pixels in the receptive (grayscale for 0 to 1 graded output)
+
         """
         # get the pixels in the receptive field of the cell
         rec_field = np.array(self.get_receptive_field_of_cell(i, j))
-        rows, cols = rec_field[:, 0], rec_field[:, 1]
-        # get the subtype of the cell
+        ## rows, cols = rec_field[:, 0], rec_field[:, 1]
+
+        # get the subtype of the cell so we can pull the correct DoG image
         subtype = self.mosaic._index_to_subtype_dict[self.mosaic.grid[i,j]]
         # put the image through the color filter of the subtype
         bipolar_image_seen = self._compute_subtype_image(subtype, method = method)
-        # get the average color of the pixels in the receptive field
-        try:
-            avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
-        except:
-            # remove any row, col pair that is out of bounds
-            # find the inds of the out of bounds rows and cols
-            # TODO figure out why this happens twice per image!! 
-            out_of_bounds_inds = [i for i in range(len(rows)) if rows[i] >= bipolar_image_seen.shape[0] or cols[i] >= bipolar_image_seen.shape[1]]
-            # remove these inds from rows and cols
-            rows = np.delete(rows, out_of_bounds_inds)
-            cols = np.delete(cols, out_of_bounds_inds)
-            print('had to delete something')
-            avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
-        return avg_color
+        
+        # now get the output of the pixel at the center of the receptive field
+        center_pos = self._cell_centers[(i, j)]
+        # print(center_pos)
+        # if center pos x or y are integers, ouput will be the value at that pixel
+        if center_pos[0].is_integer() and center_pos[1].is_integer():
+            # print('lin')
+            cell_output = bipolar_image_seen[int(center_pos[0]), int(center_pos[1])]
+        # if not, get the average of the four surrounding pixels
+        else:
+            row_floor = int(np.floor(center_pos[0]))
+            row_ceil = int(np.ceil(center_pos[0]))
+            col_floor = int(np.floor(center_pos[1]))
+            col_ceil = int(np.ceil(center_pos[1]))
+            surrounding_pixels = [
+                bipolar_image_seen[row_floor, col_floor],
+                bipolar_image_seen[row_floor, col_ceil],
+                bipolar_image_seen[row_ceil, col_floor],
+                bipolar_image_seen[row_ceil, col_ceil]
+            ]
+            cell_output = np.mean(surrounding_pixels, axis=0)
+        return cell_output
+
+        # OLD CODE FOR AVERAGING ACROSS THE RF
+        # # get the average color of the pixels in the receptive field
+        # try:
+        #     avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
+        # except:
+        #     # remove any row, col pair that is out of bounds
+        #     # find the inds of the out of bounds rows and cols
+        #     # TODO figure out why this happens twice per image!! 
+        #     out_of_bounds_inds = [i for i in range(len(rows)) if rows[i] >= bipolar_image_seen.shape[0] or cols[i] >= bipolar_image_seen.shape[1]]
+        #     # remove these inds from rows and cols
+        #     rows = np.delete(rows, out_of_bounds_inds)
+        #     cols = np.delete(cols, out_of_bounds_inds)
+        #     print('had to delete something')
+        #     avg_color = np.mean(bipolar_image_seen[rows, cols], axis = 0)
+        # return avg_color
     
     # TODO: should rename this to something like bipolar cell output, but currently it can also be used to 
     # output the color info SEEN by each bipolar subtype... need to think about this 
-    def get_all_average_colors(self, method = 'grayscale', save_flat = False):
+    def get_all_average_colors(self, method = 'grayscale', save_flat = False, blur_sigma=None):
         """
         Returns a dictionary of the average color of the pixels in the receptive field of each cell in the mosaic
         if stimulation mosaic is provided, bipass normal color filter stuff and set each cell's
         avg color to the value in the stimulation mosaic
+
+        Optional:
+        - blur_sigma: if provided, apply gaussian_blur_reflect_mask with this sigma to the flattened grid to simulate simple amacrine cells
         """
         stimulation_mosaic = self.stimulation_mosaic
         avg_colors_cell_map = {}
@@ -307,7 +342,7 @@ class BipolarImageProcessor:
                 if self.mosaic.grid[i,j] == -1:
                     continue
                 if stimulation_mosaic is None:
-                    avg_colors_cell_map[(i, j)] = self.get_average_color_of_cell(i, j, method = method)
+                    avg_colors_cell_map[(i, j)] = self.compute_cell_output(i, j, method = method)
                 else:
                     stim_val = stimulation_mosaic[i, j]
                     avg_colors_cell_map[(i, j)] = np.array([stim_val])
@@ -330,6 +365,14 @@ class BipolarImageProcessor:
                 cols = keys[:, 1]
 
                 cell_grid[rows, cols] = vals
+
+            # optionally apply masked gaussian blur (keeps invalid positions as -1)
+            if blur_sigma is not None:
+                # gaussian_blur_reflect_mask returns NaN for originally invalid positions
+                blurred = gaussian_blur_reflect_mask(cell_grid, sigma=blur_sigma)
+                # convert NaNs back to -1 sentinel and ensure float dtype
+                cell_grid = np.where(np.isnan(blurred), -1.0, blurred).astype(float)
+
             self.grid_outputs = cell_grid
     
     def get_avg_color_map_per_pixel(self):

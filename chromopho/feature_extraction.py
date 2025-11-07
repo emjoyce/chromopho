@@ -1,15 +1,14 @@
 import numpy as np
 import os 
 
-from scipy.ndimage import gaussian_filter
-
 from .mosaic import BipolarMosaic
 from .bipolar_image import BipolarImageProcessor
 from .utils import save_structured_features
 import matplotlib.pyplot as plt
 
-def export_mosaic_output_pipeline(mosaic: BipolarMosaic, image_dir: str, output_dir: str, analysis_complete_dir: str, 
-                                        gaussian_blur = False, gaussian_sigma = 1, verbose = False):
+def export_mosaic_output_pipeline(mosaic: BipolarMosaic, image_dir: str, output_dir: str, analysis_complete_dir: str,
+                                        amacrine_sigma_blur = None, verbose: bool = False,
+):
     '''
     exports the output of every bipolar cell in the mosaic as a numpy array 
     '''
@@ -30,11 +29,9 @@ def export_mosaic_output_pipeline(mosaic: BipolarMosaic, image_dir: str, output_
             img_path = os.path.join(image_dir, filename)
             img = plt.imread(img_path)
 
-            # create a BipolarImageProcessor object
-            bipolar_img = BipolarImageProcessor(mosaic, img, save_flat = True)
+            # create a BipolarImageProcessor object (pass amacrine-style blur into the processor)
+            bipolar_img = BipolarImageProcessor(mosaic, img, save_flat=True, amacrine_sigma_blur=amacrine_sigma_blur)
             grid_outputs = bipolar_img.grid_outputs
-            if gaussian_blur is not False:
-                grid_outputs = gaussian_filter(grid_outputs, sigma=gaussian_sigma)
             
 
             # save results
@@ -193,7 +190,7 @@ def extract_features_pipeline(image_dir, features_output_dir, mosaic, analysis_c
             os.rename(img_path, os.path.join(analysis_complete_dir, filename_base+'.png'))
 
 
-            
+
 
 
 

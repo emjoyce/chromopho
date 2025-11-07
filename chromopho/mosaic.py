@@ -39,14 +39,15 @@ class BipolarSubtype:
 
         self.color_filter_params = color_filter_params
         _defaults = {
-            'center_sigma':    1.0,
-            'surround_sigma':  3.0,
-            'alpha_center':    1.0,
-            'alpha_surround':  0.8,
-            'rec_kind':       'softplus',
-            'rec_r0':          0.1,
-            'rec_alpha':      0.05,
-            'rec_beta':       7.5,
+            'center_sigma': 1.0,
+            'surround_sigma': 3.0,
+            'alpha_center': 1.0,
+            'alpha_surround': 0.8,
+            'apply_rectification': True,
+            'on_threshold': 0.5,
+            'on_slope': 10.0,
+            'off_threshold': 0.5,
+            'off_slope':5.0       
         }
 
         params = rf_params or {}
