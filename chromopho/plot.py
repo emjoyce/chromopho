@@ -285,16 +285,25 @@ def plot_mosaic(mosaic, ax=None, title=None, palette = 'viridis', plot_legend = 
 #         output = np.clip(output / r_max, 0, 1)
 #         return output
 
-def bipolar_image_filter(rgb_image, center_cones, surround_cones,
+# create a new version
+# this will just do LMS blurring from horizontal cells then sum those? 
+def bipolar_image_filter_new(rgb_image, center_cones, surround_cones,
     center_sigma=1.0,
     surround_sigma=3.0,
+    cone_center_sigma = 1,
+    
+
+                             
     alpha_center=1.0,
     alpha_surround=1.0,
     apply_rectification = True,
     on_threshold=0.5,
     on_slope=10.0,
     off_threshold=0.5,
-    off_slope=5.0,             
+    off_slope=5.0,  
+
+    nonlin_adapt_cones = True,
+                            
     rgb_to_lms = np.array([
     [0.313, 0.639, 0.048],  # L
     [0.155, 0.757, 0.088],  # M 
@@ -323,6 +332,45 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     L = lms_img[..., 0]
     M = lms_img[..., 1]
     S = lms_img[..., 2]
+
+    # apply a nonlinearity to these channels and adaptation
+    def cone_stage_with_adaptation(LMS, lam = np.array([.2,.2,.2], dtype=np.float32), 
+                                   gamma = np.array([1.2, 1.2, 1.2], dtype=np.float32), 
+                                   sigma =np.array([.25, .25, .25], dtype=np.float32), 
+                                   sigma_adapt = 4.0):
+        """
+        LMS: LMS excitations, shape (H,W,3) with order [L,M,S]
+        lam, gamma, sigma: arrays of shape (3,) lam >=0, gamma != 0 
+        sigma_adapt: scalar (pixels) for Gaussian pool
+        Returns LMS_nonlin_adapt: cone response after compression and divisive normalization
+        """
+        # u_i = (lambda_i + LMS_i)^gamma_i
+        LMS_nonlin = np.power(LMS + lam.reshape(1,1,3), gamma.reshape(1,1,3))
+        # normalize LMS nonlin
+        y0 = np.power(lam, gamma)      # val at LMS = 0,0,0
+        y1 = np.power(1.0 + lam, gamma) # val at LMS = 1,1,1
+        endpoint_range = np.maximum(y1 - y0, 1e-12) 
+        LMS_nonlin = (LMS_nonlin - y0) / endpoint_range
+        # return LMS_nonlin
+        # Gaussian divisive pool per channel
+        adaptation_signal = np.stack([gaussian_filter(LMS_nonlin[...,i], sigma_adapt) for i in range(3)], axis=-1)
+        # make sure to normalize this step too 
+        gain = np.asarray(sigma, dtype=float).reshape(1, 1, 3)
+        # return (gain * LMS_nonlin)
+        # LMS_nonlin_adapt = LMS_nonlin / (sigma_i + adaptation_signal)
+        LMS_nonlin_adapt = np.clip(( LMS_nonlin) / (gain + adaptation_signal + 1e-12), 0, 1)
+        return LMS_nonlin_adapt
+        # noramlize with naka rushton 
+        k, n = 1, 1.4
+        LMS_nonlin_adapt = ((LMS_nonlin_adapt/k) / (1+(LMS_nonlin_adapt/k**n)))
+        
+        return LMS_nonlin_adapt
+    if nonlin_adapt_cones:
+        LMS = np.stack([L,M,S], axis = 2)
+        LMS = cone_stage_with_adaptation(LMS)
+        L = LMS[...,0]
+        M = LMS[...,1]
+        S = LMS[...,2]
 
     # valence/value of lms center/surround
     cL, cM, cS = _parse_cone_string(center_cones)   
