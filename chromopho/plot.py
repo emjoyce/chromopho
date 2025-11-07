@@ -287,7 +287,7 @@ def plot_mosaic(mosaic, ax=None, title=None, palette = 'viridis', plot_legend = 
 
 # create a new version
 # this will just do LMS blurring from horizontal cells then sum those? 
-def bipolar_image_filter_new(rgb_image, center_cones, surround_cones,
+def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     center_sigma=1.0,
     surround_sigma=3.0,
     cone_center_sigma = 1,
