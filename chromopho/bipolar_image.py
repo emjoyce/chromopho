@@ -258,9 +258,10 @@ class BipolarImageProcessor:
                         alpha_center = rf_params['alpha_center'],
                         alpha_surround = rf_params['alpha_surround'],
                         apply_rectification=rf_params['apply_rectification'], 
-                        on_threshold=rf_params['on_threshold'], 
-                        on_slope=rf_params['on_slope'], 
-                        off_slope=rf_params['off_slope'],
+                        on_k=rf_params['on_k'], 
+                        on_n=rf_params['on_n'], 
+                        off_n=rf_params['off_n'],
+                        off_k=rf_params['off_k'],
                         rgb_to_lms = rgb_to_lms,)
                 # so the image should output a single value dependign on subtype, which if s+, would be the output of l cones minue the output of m+l
 

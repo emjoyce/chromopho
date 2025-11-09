@@ -291,44 +291,33 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     center_sigma=1.0,
     surround_sigma=3.0,
     cone_center_sigma = 1,
-    
-
-                             
     alpha_center=1.0,
     alpha_surround=1.0,
     apply_rectification = True,
-    on_threshold=0.5,
-    on_slope=10.0,
-    off_threshold=0.5,
-    off_slope=5.0,  
-
+    on_k=0.7,
+    on_n=2.0,
+    off_k=0.7,
+    off_n=1.5,  
     nonlin_adapt_cones = True,
-                            
+    sigma_adapt = 4.0,
     rgb_to_lms = np.array([
     [0.313, 0.639, 0.048],  # L
     [0.155, 0.757, 0.088],  # M 
     [0.017, 0.109, 0.874]])):   # S 
     '''returns a grayscale image showing how a bipolar cell of a subtype would respond to the input rgb image'''
-
     if rgb_image.shape[-1] == 4:
         alpha_mask = rgb_image[..., -1] == 0
         rgb_image[alpha_mask, :3] = 1
-
     if rgb_image.shape[2] > 3:
         rgb_image = rgb_image[:, :, :3]
 
     # linearize the rgb image
     def srgb_to_linear(x):
-        '''
-        convert standard rgb into lienar rgb which makes the values more in line with number of photons
-        '''
         a = 0.055
         return np.where(x <= 0.04045, x/12.92, ((x + a)/(1 + a))**2.4)
     rgb_image = srgb_to_linear(rgb_image)
     lms_img = rgb_image @ rgb_to_lms.T
 
-
-    # deviations around baseline. so theoretical min will be -1, max will be 1
     L = lms_img[..., 0]
     M = lms_img[..., 1]
     S = lms_img[..., 2]
@@ -338,39 +327,21 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
                                    gamma = np.array([1.2, 1.2, 1.2], dtype=np.float32), 
                                    sigma =np.array([.25, .25, .25], dtype=np.float32), 
                                    sigma_adapt = 4.0):
-        """
-        LMS: LMS excitations, shape (H,W,3) with order [L,M,S]
-        lam, gamma, sigma: arrays of shape (3,) lam >=0, gamma != 0 
-        sigma_adapt: scalar (pixels) for Gaussian pool
-        Returns LMS_nonlin_adapt: cone response after compression and divisive normalization
-        """
-        # u_i = (lambda_i + LMS_i)^gamma_i
         LMS_nonlin = np.power(LMS + lam.reshape(1,1,3), gamma.reshape(1,1,3))
         # normalize LMS nonlin
         y0 = np.power(lam, gamma)      # val at LMS = 0,0,0
         y1 = np.power(1.0 + lam, gamma) # val at LMS = 1,1,1
         endpoint_range = np.maximum(y1 - y0, 1e-12) 
         LMS_nonlin = (LMS_nonlin - y0) / endpoint_range
-        # return LMS_nonlin
-        # Gaussian divisive pool per channel
         adaptation_signal = np.stack([gaussian_filter(LMS_nonlin[...,i], sigma_adapt) for i in range(3)], axis=-1)
-        # make sure to normalize this step too 
         gain = np.asarray(sigma, dtype=float).reshape(1, 1, 3)
-        # return (gain * LMS_nonlin)
-        # LMS_nonlin_adapt = LMS_nonlin / (sigma_i + adaptation_signal)
-        LMS_nonlin_adapt = np.clip(( LMS_nonlin) / (gain + adaptation_signal + 1e-12), 0, 1)
+        LMS_nonlin_adapt = np.clip(LMS_nonlin / (gain + adaptation_signal + 1e-12), 0, 1)
         return LMS_nonlin_adapt
-        # noramlize with naka rushton 
-        k, n = 1, 1.4
-        LMS_nonlin_adapt = ((LMS_nonlin_adapt/k) / (1+(LMS_nonlin_adapt/k**n)))
-        
-        return LMS_nonlin_adapt
+
     if nonlin_adapt_cones:
         LMS = np.stack([L,M,S], axis = 2)
-        LMS = cone_stage_with_adaptation(LMS)
-        L = LMS[...,0]
-        M = LMS[...,1]
-        S = LMS[...,2]
+        LMS = cone_stage_with_adaptation(LMS, sigma_adapt = sigma_adapt)
+        L = LMS[...,0]; M = LMS[...,1]; S = LMS[...,2]
 
     # valence/value of lms center/surround
     cL, cM, cS = _parse_cone_string(center_cones)   
@@ -393,12 +364,11 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     avg_surround = np.mean(new_surround_img, axis = -1)
     
     # gaussian
-    for channel in range(3):
-        # LMS space responses for center and surround based on the parseing of the cone strings
-        # will still be between -1, 0 for one and 0, 1 for the other
-        # rounding becuase of floating point errors so it stays in this^ range
-        center_img = np.round(gaussian_filter(avg_center, center_sigma), 12)
-        surround_img = np.round(gaussian_filter(avg_surround, surround_sigma), 12)
+    # LMS space responses for center and surround based on the parseing of the cone strings
+    # will still be between -1, 0 for one and 0, 1 for the other
+    # rounding becuase of floating point errors so it stays in this^ range
+    center_img = np.round(gaussian_filter(avg_center, center_sigma), 12)
+    surround_img = np.round(gaussian_filter(avg_surround, surround_sigma), 12)
     
     output = alpha_center*center_img+alpha_surround*surround_img 
     
@@ -413,42 +383,34 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     abs_min = min(alpha_center*pol_center, alpha_surround*pol_surround)
     abs_max = max(alpha_center*pol_center, alpha_surround*pol_surround)
     max_amp = abs(abs_max)+abs(abs_min) # because one of them will be negative 
-    output_normalized = (output - abs_min) / (abs_max - abs_min)
+    output_normalized = np.clip((output - abs_min) / (abs_max - abs_min), 0.0, 1.0) # clamp for insurance purposes only
     
     # return output_normalized
     # return if no rec
     if not apply_rectification:
         return output_normalized
-        
-    # determine ON (positive) vs OFF (negative)
-    # ON cells respond to light increments, OFF cells to decrements
-    on_polarity = 1 if pol_center > 0 else -1
 
-    # separate the output into ON and OFF components based on cell polarity
-    # values above 0.5 represent excitation for ON cells, below 0.5 for OFF cells
-    deviation_from_baseline = output_normalized - 0.5
-    # apply sigmoid rectification for ON cells (steep threshold for light increments)
-    # ON bipolars have sign-inverting mGluR6 cascade with threshold-like nonlinearity
-    def on_rectifier(x, threshold, slope):
-        '''steep sigmoid for ON cells - small increments ignored'''
-        return 1.0 / (1.0 + np.exp(-slope * (x - threshold)))
-    
-    # apply leaky rectification for OFF cells (more linear near baseline)
-    # OFF bipolars have ionotropic AMPA/kainate receptors, more readily transmit decrements
-    def off_rectifier(x, threshold, slope):
-        '''gentler sigmoid for OFF cells - decrements more readily transmitted'''
-        return 1.0 / (1.0 + np.exp(-slope * (x - threshold)))
-    
-    # apply appropriate rectifier based on cell polarity
-    if on_polarity > 0:
-        # center is ON: apply steep rectifier to positive deviations
-        output_rectified = on_rectifier(output_normalized, on_threshold, on_slope)
+    # Naka–Rushton rectifiers without sign flip (bc sign is already considered) and with dif params for on and off
+    def _nr_base(x, k, n):
+        x = np.clip(x, 0.0, 1.0)
+        k = max(float(k), 1e-12); n = float(n)
+        xn = np.power(x, n); kn = np.power(k, n)
+        return xn / (xn + kn + 1e-12)
+
+    def on_rectifier_nr(x, k, n):
+        # low-end compression, output [0,1]
+        s = 1.0 + k**n
+        return np.clip(s * _nr_base(x, k, n), 0.0, 1.0)
+
+    def off_rectifier_nr_high(x, k, n):
+        # high-end compression, output [0,1]
+        s = 1.0 + k**n
+        return np.clip(1.0 - s * _nr_base(1.0 - x, k, n), 0.0, 1.0)
+
+    if pol_center > 0:
+        output_rectified = on_rectifier_nr(output_normalized, on_k, on_n)
     else:
-        # center is OFF: apply gentler rectifier (inverted for negative responses)
-        # flip the signal so decrements become increases for the rectifier
-        flipped_output = 1.0 - output_normalized
-        rectified_flipped = off_rectifier(flipped_output, off_threshold, off_slope)
-        output_rectified = 1.0 - rectified_flipped
+        output_rectified = off_rectifier_nr_high(output_normalized, off_k, off_n)
     
     return output_rectified
 

@@ -44,10 +44,10 @@ class BipolarSubtype:
             'alpha_center': 1.0,
             'alpha_surround': 0.8,
             'apply_rectification': True,
-            'on_threshold': 0.5,
-            'on_slope': 10.0,
-            'off_threshold': 0.5,
-            'off_slope':5.0       
+            'on_k': 0.7,
+            'on_n': 2.0,
+            'off_k': 0.7,
+            'off_n': 1.5       
         }
 
         params = rf_params or {}
@@ -76,8 +76,8 @@ class BipolarMosaic:
     """
     Creates a mosaic of bipolar cells with different subtypes.
     """
-    def __init__(self, num_cells, shape = 'rectangle', width = None, height = None, 
-                    radius = None, eccentricity = None, subtypes = None, optimize_t = 45):
+    def __init__(self, num_cells, shape = 'circle', width = None, height = None, 
+                    radius = None, eccentricity = None, subtypes = None, density_swap = True):
         """
         Parameters:
         num_cells (int): approximate number of bipolar cells in the mosaic. note that this number will be 
@@ -97,7 +97,6 @@ class BipolarMosaic:
         self.width = width
         self.height = height
         self.radius = radius
-        self._optimize_t = optimize_t
         self.num_cells = num_cells
         self.subtypes = subtypes if subtypes else []
         self.subtype_index_dict = {st.name: i+1 for i, st in enumerate(self.subtypes)}
@@ -114,8 +113,9 @@ class BipolarMosaic:
             self.radius = self._best_shape()
             self.grid = self._generate_circlular_grid()
             self._apply_tiling()
-            print('density swap')
-            self.grid = self._density_swap()
+            if density_swap:
+                print('density swap')
+                self.grid = self._density_swap()
         self._generate_receptive_field_matrix()
         
 
