@@ -6,6 +6,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from .utils import amacrine_crossover_minimal
+
 
 # ------------------------------
 # Geometry + wiring helpers
@@ -261,3 +263,22 @@ class LocalCirclePredictor:
             chan[self.valid_lin] = y_rgb[c]
             pred[..., c] = chan.reshape(H, W)
         return np.clip(pred, 0.0, 1.0)
+
+
+def predict_img(mosaic_output, model, mosaic, amacrine_blur = False, amacrine_sigma = 2, amacrine_beta = .15, 
+                    same_polarity_unsharp=False):
+    '''
+    given a local nn model and a mosaic, return predicted rgb image output
+    mosaic_output can be a mosaic output path or a numpy array of the mosaic output itself
+    '''
+    if isinstance(mosaic_output, str):
+        arr = np.load(mosaic_output)
+    else:
+        arr = mosaic_output
+    if amacrine_blur:
+        arr = amacrine_crossover_minimal(arr, mosaic.grid, mosaic.subtype_index_dict, sigma = amacrine_sigma, beta = amacrine_beta, 
+                                                same_polarity_unsharp=same_polarity_unsharp)
+
+    pred = model.predict(arr)
+    
+    return pred
