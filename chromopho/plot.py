@@ -631,7 +631,9 @@ def local_phosphene(
             if code == invalid_code:
                 continue
             counts_by_name[name] = int(np.count_nonzero(inside_allowed & (mosaic_grid == code)))
+            
         print("Cells under electrode by subtype:", counts_by_name)
+    changed = sum(counts_by_name.values())
     # === END NEW ===
 
     # ---------- Blend toward target per subtype with per-subtype weights ----------
@@ -668,19 +670,158 @@ def local_phosphene(
             new   = old * (1.0 - w_eff) + target * w_eff
             out[mask_code] = new
     # ---------- Report changes ----------
+
     if return_cells:
-        changed = np.count_nonzero(np.abs(out - before) > 1e-12)
-        print(f"Cells changed: {changed}")
+        print(f"Cells under electrode: {changed}")
+        total_changed = np.count_nonzero(np.abs(out - before) > 1e-12)
+        print(f"Cells affected: {total_changed}")
+        return out, changed, total_changed
     if amacrine_blur:
         out = amacrine_crossover_minimal(out, mosaic_grid, subtype_dict, sigma =2, beta = .15, 
                                                same_polarity_unsharp=False)
 
-    if return_cells:
-        return out, changed
-
     return out
 
 
+# def local_phosphene(
+#     mosaic_grid: np.ndarray,
+#     mosaic_background_values,
+#     i: int, j: int,
+#     radius: float,
+#     shape: str = "hex",                  # "circle" or "hex" 
+#     values_by_subtype: dict = {
+#     'm_off': 0.5, 'm_on': 0.7,
+#     'l_off': 0.5, 'l_on': 0.7,
+#     's_off': 0.5, 's_on': 0.7,
+#     'dif_on': 0.5, 'dif_off': 0.7},         
+#     subtype_dict: dict = {'m_off': 1, 'm_on': 2, 'l_off': 3, 'l_on': 4, 's_off': 5, 's_on': 6,
+#                                  'dif_on': 7, 'dif_off': 8, 'none': -1},
+#     invalid_code: int = -1,
+#     soft_sigma: float = .1,                
+#     truncate: float = 5.0,                  
+#     response_gain_by_subtype: dict = None,  # e.g. {'s_on': 1.2, 'dif_off': 0.6}
+#     sigma_by_subtype: dict = None,          # absolute override per subtype (in pixels)
+#     scale_inside_by_gain: bool = False,     
+#     in_place: bool = False,
+#     return_cells = False, # if true return the number of cells changed 
+#     amacrine_blur = True
+#     ):
+#     """
+#     Softly blend mosaic values toward subtype-specific targets with Gaussian falloff from a circle/hex.
+#       - Per-subtype *target* values via `values_by_subtype`.
+#       - Optional per-subtype *response gain* (amplitude) via `response_gain_by_subtype`.
+#       - Per-subtype *sigma* override via `sigma_by_subtype` (absolute px). Otherwise:
+#             sigma = soft_sigma * radius   (soft_sigma is a scale factor you can turn up/down)
+#       - Inside the shape: weight = 1 (or = clip(gain,0,1) if scale_inside_by_gain=True).
+#       - Outside: weight = clip(gain * exp(-d^2/(2*sigma^2)), 0, 1), where d = distance to shape.
+#       - Only modifies cells whose subtype appears in `values_by_subtype`; invalid cells untouched.
+#       - Prints how many cells changed.
+#     """
+#     if values_by_subtype is None or soft_sigma <= 0:
+#         return mosaic_background_values
+
+#     H, W = mosaic_background_values.shape
+#     out = mosaic_background_values if in_place else mosaic_background_values.copy()
+#     before = out.copy()
+
+#     # --- helpers: map dict keyed by names or int codes -> code:int -> float ---
+#     def _map_dict_any(d):
+#         if d is None:
+#             return {}
+#         mapped = {}
+#         for k, v in d.items():
+#             if isinstance(k, str):
+#                 if k in name_to_code:
+#                     mapped[name_to_code[k]] = float(v)
+#             else:
+#                 mapped[int(k)] = float(v)
+#         return mapped
+
+#     code_to_val   = _map_dict_any(values_by_subtype)
+#     code_to_gain  = _map_dict_any(response_gain_by_subtype)
+#     code_to_sigma = _map_dict_any(sigma_by_subtype)
+
+#     # ---------- Build hard shape mask (True = inside) ----------
+#     yy, xx = np.ogrid[:H, :W]
+#     dy = yy - i0
+#     dx = xx - j0
+
+#     # if radius = 1, change shape to circle 
+#     if radius == 1:
+#         shape = "circle"
+#     if shape.lower() == "circle":
+#         inside = (dx*dx + dy*dy) <= (radius*radius)
+#     elif shape.lower() == "hex":
+#         # Flat-bottom / flat-top hex (horizontal flats). Apothem a = (√3/2)*r
+#         a = radius * (np.sqrt(3) / 2.0)
+#         dot1 = dy
+#         dot2 = (np.sqrt(3)/2.0)*dx - 0.5*dy
+#         dot3 = -(np.sqrt(3)/2.0)*dx - 0.5*dy
+#         inside = (np.abs(dot1) <= a) & (np.abs(dot2) <= a) & (np.abs(dot3) <= a)
+
+#     else:
+#         print(shape)
+#         raise ValueError("shape must be 'circle' or 'hex'")
+
+#     # Distance from each pixel to the nearest inside pixel (0 for inside)
+#     dist_outside = distance_transform_edt(~inside)
+
+#     # Never modify invalid cells
+#     allowed = (subtype_grid != invalid_code)
+    
+#     # === NEW: print counts per subtype under the electrode (inside & allowed) ===
+#     inside_allowed = inside & allowed
+#     counts_by_name = {}
+#     for name, code in name_to_code.items():
+#         if code == invalid_code:
+#             continue
+#         counts_by_name[name] = int(np.count_nonzero(inside_allowed & (subtype_grid == code)))
+#     print("Cells under electrode by subtype:", counts_by_name)
+#     changed = sum(counts_by_name.values())
+#     # === END NEW ===
+
+#     # ---------- Blend toward target per subtype with per-subtype weights ----------
+#     for code, target in code_to_val.items():
+#         mask_code = (subtype_grid == code) & allowed
+#         if not np.any(mask_code):
+#             continue
+
+#         # tie sigma to stimulation radius if no per-subtype override
+#         sigma_c = float(code_to_sigma.get(code, soft_sigma * radius))
+#         gain_c  = float(code_to_gain.get(code, 1.0))
+
+#         # Build per-subtype weight field
+#         w_code = np.zeros_like(out, dtype=float)
+
+#         # Inside: either full effect (=1) or scaled by gain (clipped)
+#         if scale_inside_by_gain:
+#             w_code[inside] = np.clip(gain_c, 0.0, 1.0)
+#         else:
+#             w_code[inside] = 1.0
+
+#         # Outside: Gaussian tail * gain, clipped to [0,1]
+#         if sigma_c > 0:
+#             w_out = gain_c * np.exp(-0.5 * (dist_outside / sigma_c) ** 2)
+#             if truncate is not None and truncate > 0:
+#                 w_out = np.where(dist_outside <= (truncate * sigma_c), w_out, 0.0)
+#             w_out = np.clip(w_out, 0.0, 1.0)
+#             w_code[~inside] = w_out[~inside]
+
+#         # Apply to this subtype only
+#         if np.any(mask_code):
+#             w_eff = w_code[mask_code]
+#             old   = out[mask_code]
+#             new   = old * (1.0 - w_eff) + target * w_eff
+#             out[mask_code] = new
+
+#     # ---------- Report changes ----------
+#     # before blur 
+#     print(f"Cells under electrode: {changed}")
+#     total_changed = np.count_nonzero(np.abs(out - before) > 1e-12)
+#     print(f"Cells affected: {total_changed}")
+#     if return_cells:
+#         return out, changed, total_changed
+#     return out
 
 
 
