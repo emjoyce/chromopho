@@ -1,7 +1,10 @@
 README.md
 setup.py
 chromopho/__init__.py
-chromopho/bipolar_subtypes.py
+chromopho/bipolar_image.py
+chromopho/feature_extraction.py
+chromopho/local_nn_model.py
+chromopho/model.py
 chromopho/mosaic.py
 chromopho/plot.py
 chromopho/utils.py
