@@ -5,8 +5,22 @@ from .utils import _parse_cone_string
 
 
 def _round_to_decimals(x, decimals):
+    """
+    Round to a fixed number of decimals while preserving gradients via STE.
+    Forward matches tf.round; backward passes gradient through unchanged.
+    """
     factor = tf.cast(10.0 ** decimals, x.dtype)
-    return tf.round(x * factor) / factor
+
+    @tf.custom_gradient
+    def _round_with_ste(z):
+        y = tf.round(z * factor) / factor
+
+        def grad(dy):
+            return dy
+
+        return y, grad
+
+    return _round_with_ste(x)
 
 
 def _gaussian_kernel1d(sigma, truncate=4.0, dtype=tf.float64):
@@ -243,8 +257,13 @@ class BipolarImageProcessorTF:
         build_receptive_fields=True,
     ):
         self.mosaic = mosaic
-        self.image = np.asarray(image)
-        self.image_tf = tf.convert_to_tensor(self.image)
+        self.image_tf = tf.convert_to_tensor(image)
+        self.image = self.image_tf
+        if self.image_tf.shape.rank is None or self.image_tf.shape[0] is None or self.image_tf.shape[1] is None:
+            shape = tf.shape(self.image_tf)
+            self.image_shape = (int(shape[0].numpy()), int(shape[1].numpy()))
+        else:
+            self.image_shape = (int(self.image_tf.shape[0]), int(self.image_tf.shape[1]))
         self.stimulation_mosaic = stimulation_mosaic
         self.fit_option = fit_option
         self.bipolar_images = {}
@@ -258,7 +277,7 @@ class BipolarImageProcessorTF:
             self.get_avg_color_map_per_pixel()
 
     def _fit_image_and_mosaic(self, return_minimum=False):
-        img_height, img_width = self.image.shape[:2]
+        img_height, img_width = self.image_shape
         mosaic_height, mosaic_width = self.mosaic.grid.shape[:2]
         if img_height < mosaic_height or img_width < mosaic_width:
             raise ValueError("Image is too small to fit the mosaic")
@@ -356,7 +375,7 @@ class BipolarImageProcessorTF:
 
     def _square_to_circle_pixels(self, square_pixels, i, j):
         scale = self.mosaic.get_receptive_field_size(i, j)
-        img_height, img_width = self.image.shape[:2]
+        img_height, img_width = self.image_shape
         if self._minimum_overlap_square_dim in [1, 2, 3, 4, 5, 6, 7]:
             scale_min = {1: 10, 2: 2.5, 3: 1.5, 4: 1.3, 5: 1.2, 6: 1.1, 7: 1.1}
             scale = max(scale, scale_min[self._minimum_overlap_square_dim])
@@ -386,7 +405,7 @@ class BipolarImageProcessorTF:
         col_start = max(int(center_col - radius - 1), 0)
         col_end = min(int(center_col + radius + 1), img_width)
         for r in range(row_start, row_end + 1):
-            if r <= self.image.shape[0] and r > 0:
+            if r <= img_height and r > 0:
                 for c in range(col_start, col_end + 1):
                     dist_sq = (r - center_row) ** 2 + (c - center_col) ** 2
                     if dist_sq <= radius**2:
@@ -448,7 +467,6 @@ class BipolarImageProcessorTF:
 
     def get_all_average_colors(self, method="grayscale", save_flat=False, blur_sigma=None):
         stimulation_mosaic = self.stimulation_mosaic
-        avg_colors_cell_map = {}
 
         valid_coords = self._valid_cell_coords
         valid_coords_tf = tf.convert_to_tensor(valid_coords, dtype=tf.int32)
@@ -480,30 +498,43 @@ class BipolarImageProcessorTF:
             cell_outputs = tf.gather_nd(subtype_stack, indices)
 
         self.cell_outputs = cell_outputs
-        cell_outputs_np = cell_outputs.numpy()
-        for coord, val in zip(valid_coords, cell_outputs_np):
-            avg_colors_cell_map[(int(coord[0]), int(coord[1]))] = val
+        self.avg_colors_cell_map = None
 
-        self.avg_colors_cell_map = avg_colors_cell_map
+        h, w = self.mosaic.grid.shape
+        valid_mask = tf.convert_to_tensor(self.mosaic.grid != -1)
+        base_grid = tf.scatter_nd(valid_coords_tf, cell_outputs, [h, w])
+        base_grid = tf.where(valid_mask, base_grid, tf.cast(-1.0, base_grid.dtype))
+        self.avg_colors_cell_grid = base_grid
 
         if save_flat:
             if method == "lms":
                 print("unable to save flat lms output grid, set method to grayscale")
                 return
-            h, w = self.mosaic.grid.shape
-            valid_mask = tf.convert_to_tensor(self.mosaic.grid != -1)
-            grid_outputs = tf.scatter_nd(valid_coords_tf, cell_outputs, [h, w])
-            grid_outputs = tf.where(valid_mask, grid_outputs, tf.cast(-1.0, grid_outputs.dtype))
+            grid_outputs = base_grid
 
             if blur_sigma is not None:
                 grid_outputs = gaussian_blur_reflect_mask_tf(grid_outputs, sigma=blur_sigma)
 
             self.grid_outputs = grid_outputs
 
+    def get_avg_colors_cell_map_numpy(self):
+        if self.avg_colors_cell_map is not None:
+            return self.avg_colors_cell_map
+        if not hasattr(self, "cell_outputs"):
+            raise ValueError("cell_outputs not computed; call get_all_average_colors first.")
+        avg_colors_cell_map = {}
+        valid_coords = self._valid_cell_coords
+        cell_outputs_np = self.cell_outputs.numpy()
+        for coord, val in zip(valid_coords, cell_outputs_np):
+            avg_colors_cell_map[(int(coord[0]), int(coord[1]))] = val
+        self.avg_colors_cell_map = avg_colors_cell_map
+        return avg_colors_cell_map
+
     def get_avg_color_map_per_pixel(self):
         if not self._receptive_field_map:
             raise ValueError("Receptive field map not built. Set build_receptive_fields=True.")
 
+        avg_color_map = self.get_avg_colors_cell_map_numpy()
         for subtype in self.mosaic.subtypes:
             subtype_index = self.mosaic.subtype_index_dict[subtype.name]
             rec_fields = {
@@ -511,14 +542,13 @@ class BipolarImageProcessorTF:
                 for cell, pixels in self._receptive_field_map.items()
                 if self.mosaic.grid[cell] == subtype_index
             }
-            avg_color_map = self.avg_colors_cell_map
 
             pixel_to_avg_colors = {}
 
             for cell, pixels in rec_fields.items():
                 avg_color = avg_color_map[cell]
                 for pixel in pixels:
-                    if pixel[0] < self.image.shape[0] and pixel[1] < self.image.shape[1]:
+                    if pixel[0] < self.image_shape[0] and pixel[1] < self.image_shape[1]:
                         pixel_to_avg_colors.setdefault(pixel, []).append(avg_color)
 
             pixel_to_final_avg = {
