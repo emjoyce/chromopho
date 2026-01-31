@@ -61,6 +61,8 @@ class BipolarImageProcessor:
 
             # first calculate the nonoverlapping squares that would fit in here
             square_dim = min(img_height // mosaic_height, img_width // mosaic_width)
+            # if square_dim < 1:
+            #     square_dim = 1
             self._minimum_overlap_square_dim = square_dim
             # get the dimensions of the mosaic in the space of the image
             img_cutout_dim = square_dim * mosaic_height, square_dim * mosaic_width
@@ -92,7 +94,7 @@ class BipolarImageProcessor:
                     end_row = min(start_row + square_dim, img_height)
                     start_col = img_cutout_j_range[0] + j * square_dim
                     end_col = min(start_col + square_dim, img_width)
-
+                    
                     # Build receptive field pixel indices
                     rec_field = [
                         (r, c)

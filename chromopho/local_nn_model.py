@@ -9,9 +9,7 @@ import torch.nn as nn
 from .utils import amacrine_crossover_minimal
 
 
-# ------------------------------
-# Geometry + wiring helpers
-# ------------------------------
+
 
 def infer_cell_positions_from_arr(arr178: np.ndarray):
     """
@@ -23,12 +21,12 @@ def infer_cell_positions_from_arr(arr178: np.ndarray):
     mask = (arr178 >= 0)
     ys, xs = np.where(mask)
     pos = np.stack([ys, xs], axis=1).astype(np.int32)
-    order = np.argsort(ys*1000 + xs)  # stable order
+    order = np.argsort(ys*1000 + xs)  
     pos = pos[order]
     idx_map = np.full(arr178.shape, -1, dtype=np.int64)
     for i,(y,x) in enumerate(pos):
         idx_map[y,x] = i
-    return pos.astype(np.float32), idx_map   # pos: (N_cells,2) in 178×178 coords
+    return pos.astype(np.float32), idx_map   
 
 
 def build_grid_coords_on_178(grid: int, H178: int = 178, W178: int = 178):
@@ -82,9 +80,7 @@ def neighbor_lists(src_coords: np.ndarray, dst_coords: np.ndarray, radius: float
     return lists
 
 
-# ------------------------------
-# Locally-connected layers
-# ------------------------------
+
 
 class LocalLinear(nn.Module):
     """
@@ -148,9 +144,7 @@ class LocalMLPCircle(nn.Module):
         return torch.sigmoid(y)
 
 
-# ------------------------------
-# Public API
-# ------------------------------
+
 
 def mosaic_to_flat(mosaic_arr: np.ndarray, idx_map: np.ndarray, N_cells: int) -> np.ndarray:
     """

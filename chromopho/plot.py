@@ -154,140 +154,7 @@ def plot_mosaic(mosaic, ax=None, title=None, palette = 'viridis', plot_legend = 
     return ax
 
 
-# def bipolar_image_filter(
-#     rgb_image,
-#     center_cones,
-#     surround_cones,
-#     center_sigma=1.0,
-#     surround_sigma=3.0,
-#     alpha_center=1.0,
-#     alpha_surround=0.4,
-#     rgb_to_lms = np.array([
-#         [0.313, 0.639, 0.048],  # L
-#         [0.155, 0.757, 0.088],  # M 
-#         [0.017, 0.109, 0.874]]),   # S 
-#     default_value = [0.5,0.5,0.5], 
-#     method = 'grayscale',
-#     rec_kind='softplus', 
-#     rec_r0=0.05, 
-#     rec_alpha=0.05, 
-#     rec_beta=7.5):
-#     """
-#     Returns an rbg image showing how a center-surround bipolar cell would
-#     respond in color space. 
-#     uses a grey (0.5,0.5,0.5) as starting point in LMS color spaceto represent response so that 
-#     increased and decreased response can be encoded i.e. a S center, -ML surround, both the +S and -ML can be encoded
-#     """
-#     # becuase some images have an alpha value, remove the alpha value
 
-
-#     # now if the places where alpha == 0 is black, replace with white because we need the contrast to see black logos 
-#     if rgb_image.shape[-1] == 4:
-#         alpha_mask = rgb_image[..., -1] == 0
-#         rgb_image[alpha_mask, :3] = 1
-
-#     if rgb_image.shape[2] > 3:
-#         rgb_image = rgb_image[:, :, :3]
-
-#     # linearize the rgb image
-#     def srgb_to_linear(x):
-#         '''
-#         convert standard rgb into lienar rgb which makes the values more in line with number of photons
-#         '''
-#         a = 0.055
-#         return np.where(x <= 0.04045, x/12.92, ((x + a)/(1 + a))**2.4)
-    
-#     # rgb to lms
-#     baseline = 0.5  
-#     L = np.sum(rgb_image * rgb_to_lms[0], axis=2) - baseline
-#     M = np.sum(rgb_image * rgb_to_lms[1], axis=2) - baseline
-#     S = np.sum(rgb_image * rgb_to_lms[2], axis=2) - baseline
-
-#     # valence/value of lms center/surround
-#     cL, cM, cS = _parse_cone_string(center_cones)   
-#     sL, sM, sS = _parse_cone_string(surround_cones)
-
-#     # apply center and surround to whole LMS images
-#     center_img = np.stack([cL * L, cM * M, cS * S], axis=-1)  
-#     surround_img = np.stack([sL * L, sM * M, sS * S], axis=-1)
-
-#     # apply gaussian filters to each channel
-#     for channel in range(3):
-#         # LMS space responses for center and surround based on the parseing of the cone strings
-#         center_img[..., channel] = gaussian_filter(center_img[..., channel], center_sigma)
-#         surround_img[..., channel] = gaussian_filter(surround_img[..., channel], surround_sigma)
-    
-#     if method == 'lms':
-#         # combine center and surround into one image
-#         final_lms = alpha_center * center_img + alpha_surround * surround_img
-#         # make a baseline rgb image, defaults baseline to gray
-#         baseline_lms = np.array(default_value)
-
-#         final_lms[...,0] += baseline_lms[0]/2 #divided by 2 because adding from .5 # TODO: what if the starting point is not .5
-#         final_lms[...,1] += baseline_lms[1]/2
-#         final_lms[...,2] += baseline_lms[2]/2        
-        
-#         # back to rgb from lms
-#         lms_to_rgb = np.linalg.inv(rgb_to_lms)
-#         rgb_out = np.dot(final_lms, lms_to_rgb.T)
-
-#         # accounting for l and m cones being close to each other, bring min val to 0, norm by range to make response between 0 and 1
-#         min_val, max_val = rgb_out.min(), rgb_out.max()
-#         rgb_out = (rgb_out-min_val)/(max_val-min_val)
-
-#         return rgb_out
-    
-#     elif method == 'grayscale' or method == 'greyscale':
-#         # combine center and surroudn into one output by taking center - surround 
-#         # so take center response and subtract surround response
-#         # if i have two or more responses in center or surround, take the average of them 
-#         # drop the columns from center_img that are 0 in cL, cM, cS
-#         keep_columns_center = np.array([cL, cM, cS], dtype=bool)
-#         new_center_img = center_img[..., keep_columns_center]
-
-#         # drop the columns from surround_img that are 0 in sL, sM, sS
-#         keep_columns_surround = np.array([sL, sM, sS], dtype=bool)
-#         new_surround_img = surround_img[..., keep_columns_surround]
-
-#         avg_center = np.mean(new_center_img, axis = -1)
-#         avg_surround = np.mean(new_surround_img, axis = -1)
-#         # subtract the two to get the output
-
-#         # just add cause one should be -
-#         output = alpha_center*avg_center+alpha_surround*avg_surround 
-#         # need to normalize, but not in a way that would 
-#         # example - if i have an image of all yellow, i want the response to be different for each cone type 
-#         # so I wont normalize to 0-1, but I will normalize to the range of the output
-#         # so what is the theoretical max and min here? -1 to 1 right? 
-#         # ok: normalize to make -1 0 and 1 1 
-#         # TODO: this might be better as sigmoid or something 
-
-#         # output = (output + 1)/2
-#         # ok this is what it needs to be, Half-wave rectification: 
-#         def rectifier(x, kind='baseline', r0=0.05, alpha=0.05, beta=15.0):
-#             """
-#             Returns a softened ON and OFF pair for a linear signal *x*.
-#             """
-#             if kind == 'baseline':      
-#                 output  = np.maximum(0, x) + r0
-#             elif kind == 'leaky':       
-#                 output  = np.where(x>0, x, alpha*x)
-#             elif kind == 'softplus':    
-#                 base = np.log1p(np.exp(0)) / beta
-#                 # soft = lambda z: (np.log1p(np.exp(beta * z)) / beta) - (np.log1p(np.exp(0)) / beta)
-#                 output = np.log1p(np.exp(beta * x)) / beta - base
-
-#             else:
-#                 raise ValueError("kind must be 'baseline', 'leaky', or 'softplus'")
-#             return output
-
-#         output = rectifier(output, kind=rec_kind, r0=rec_r0, alpha=rec_alpha, beta=rec_beta)
-#         r_max = (alpha_center - alpha_surround) * baseline     # with α_center > α_surround
-#         output = np.clip(output / r_max, 0, 1)
-#         return output
-
-# create a new version
-# this will just do LMS blurring from horizontal cells then sum those? 
 def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     center_sigma=1.0,
     surround_sigma=3.0,
@@ -556,15 +423,19 @@ def local_phosphene(
     ):
     """
     Softly blend mosaic values toward subtype-specific targets with Gaussian falloff from a circle/hex.
-      - Per-subtype *target* values via `values_by_subtype`.
-      - Optional per-subtype *response gain* (amplitude) via `response_gain_by_subtype`.
-      - Per-subtype *sigma* override via `sigma_by_subtype` (absolute px). Otherwise:
-            sigma = soft_sigma * radius   (soft_sigma is a scale factor you can turn up/down)
-      - Inside the shape: weight = 1 (or = clip(gain,0,1) if scale_inside_by_gain=True).
-      - Outside: weight = clip(gain * exp(-d^2/(2*sigma^2)), 0, 1), where d = distance to shape.
-      - Only modifies cells whose subtype appears in `values_by_subtype`; invalid cells untouched.
-      - Prints how many cells changed.
-    if mosaic_background_values is None, will load black_bipolar_outputs from local file and use that as background
+      mosaic_grid: 2D array of subtype type ints per cell. (mosaic.grid)
+      mosaic_background_values: 2d array of background values for each cell. (e.g. black_bipolar_outputs)
+        (if mosaic_background_values is None, will load black_bipolar_outputs from local file and use that as background)
+      i, j: center of stimulation (in pixel coordinates)
+      radius: radius of stimulation (in pixels)
+      shape: "circle" or "hex"
+      soft_sigma: value of sigma relative to radius (sigma = soft_sigma * radius) for Gaussian falloff.
+      truncate: truncate Gaussian at this many sigmas (set to None for no truncation).
+      scale_inside_by_gain: if True, inside shape weight = clip(gain,0, 1) instead of 1.
+      in_place: if True, modifies mosaic_background_values in place; else returns a copy.
+      return_cells: if True, prints and returns number of cells under electrode by subtype and total changed
+      amacrine_blur: if True, applies Gaussian blur to simulate amacrine cell effects
+    
     """
     if mosaic_background_values is None:
         data_file = Path(__file__).resolve().parent / "mosaic_outputs" / "black_bipolar_outputs.npy"
@@ -578,7 +449,6 @@ def local_phosphene(
     out = mosaic_background_values if in_place else mosaic_background_values.copy()
     before = out.copy()
 
-    # --- helpers: map dict keyed by names or int codes -> code:int -> float ---
     def _map_dict_any(d):
         if d is None:
             return {}
@@ -595,7 +465,6 @@ def local_phosphene(
     code_to_gain  = _map_dict_any(response_gain_by_subtype)
     code_to_sigma = _map_dict_any(sigma_by_subtype)
 
-    # ---------- Build hard shape mask (True = inside) ----------
     yy, xx = np.ogrid[:H, :W]
     dy = yy - i
     dx = xx - j
@@ -617,13 +486,12 @@ def local_phosphene(
         print(shape)
         raise ValueError("shape must be 'circle' or 'hex'")
 
-    # Distance from each pixel to the nearest inside pixel (0 for inside)
+    # distance from each pixel to the nearest inside pixel (0 for inside)
     dist_outside = distance_transform_edt(~inside)
 
-    # Never modify invalid cells
+    # pick out valid cells 
     allowed = (mosaic_grid != invalid_code)
     
-    # === NEW: print counts per subtype under the electrode (inside & allowed) ===
     inside_allowed = inside & allowed
     counts_by_name = {}
     if return_cells:
@@ -634,9 +502,7 @@ def local_phosphene(
             
         print("Cells under electrode by subtype:", counts_by_name)
     changed = sum(counts_by_name.values())
-    # === END NEW ===
 
-    # ---------- Blend toward target per subtype with per-subtype weights ----------
     for code, target in code_to_val.items():
         mask_code = (mosaic_grid == code) & allowed
         if not np.any(mask_code):
@@ -669,7 +535,6 @@ def local_phosphene(
             old   = out[mask_code]
             new   = old * (1.0 - w_eff) + target * w_eff
             out[mask_code] = new
-    # ---------- Report changes ----------
 
     if return_cells:
         print(f"Cells under electrode: {changed}")
@@ -681,147 +546,4 @@ def local_phosphene(
                                                same_polarity_unsharp=False)
 
     return out
-
-
-# def local_phosphene(
-#     mosaic_grid: np.ndarray,
-#     mosaic_background_values,
-#     i: int, j: int,
-#     radius: float,
-#     shape: str = "hex",                  # "circle" or "hex" 
-#     values_by_subtype: dict = {
-#     'm_off': 0.5, 'm_on': 0.7,
-#     'l_off': 0.5, 'l_on': 0.7,
-#     's_off': 0.5, 's_on': 0.7,
-#     'dif_on': 0.5, 'dif_off': 0.7},         
-#     subtype_dict: dict = {'m_off': 1, 'm_on': 2, 'l_off': 3, 'l_on': 4, 's_off': 5, 's_on': 6,
-#                                  'dif_on': 7, 'dif_off': 8, 'none': -1},
-#     invalid_code: int = -1,
-#     soft_sigma: float = .1,                
-#     truncate: float = 5.0,                  
-#     response_gain_by_subtype: dict = None,  # e.g. {'s_on': 1.2, 'dif_off': 0.6}
-#     sigma_by_subtype: dict = None,          # absolute override per subtype (in pixels)
-#     scale_inside_by_gain: bool = False,     
-#     in_place: bool = False,
-#     return_cells = False, # if true return the number of cells changed 
-#     amacrine_blur = True
-#     ):
-#     """
-#     Softly blend mosaic values toward subtype-specific targets with Gaussian falloff from a circle/hex.
-#       - Per-subtype *target* values via `values_by_subtype`.
-#       - Optional per-subtype *response gain* (amplitude) via `response_gain_by_subtype`.
-#       - Per-subtype *sigma* override via `sigma_by_subtype` (absolute px). Otherwise:
-#             sigma = soft_sigma * radius   (soft_sigma is a scale factor you can turn up/down)
-#       - Inside the shape: weight = 1 (or = clip(gain,0,1) if scale_inside_by_gain=True).
-#       - Outside: weight = clip(gain * exp(-d^2/(2*sigma^2)), 0, 1), where d = distance to shape.
-#       - Only modifies cells whose subtype appears in `values_by_subtype`; invalid cells untouched.
-#       - Prints how many cells changed.
-#     """
-#     if values_by_subtype is None or soft_sigma <= 0:
-#         return mosaic_background_values
-
-#     H, W = mosaic_background_values.shape
-#     out = mosaic_background_values if in_place else mosaic_background_values.copy()
-#     before = out.copy()
-
-#     # --- helpers: map dict keyed by names or int codes -> code:int -> float ---
-#     def _map_dict_any(d):
-#         if d is None:
-#             return {}
-#         mapped = {}
-#         for k, v in d.items():
-#             if isinstance(k, str):
-#                 if k in name_to_code:
-#                     mapped[name_to_code[k]] = float(v)
-#             else:
-#                 mapped[int(k)] = float(v)
-#         return mapped
-
-#     code_to_val   = _map_dict_any(values_by_subtype)
-#     code_to_gain  = _map_dict_any(response_gain_by_subtype)
-#     code_to_sigma = _map_dict_any(sigma_by_subtype)
-
-#     # ---------- Build hard shape mask (True = inside) ----------
-#     yy, xx = np.ogrid[:H, :W]
-#     dy = yy - i0
-#     dx = xx - j0
-
-#     # if radius = 1, change shape to circle 
-#     if radius == 1:
-#         shape = "circle"
-#     if shape.lower() == "circle":
-#         inside = (dx*dx + dy*dy) <= (radius*radius)
-#     elif shape.lower() == "hex":
-#         # Flat-bottom / flat-top hex (horizontal flats). Apothem a = (√3/2)*r
-#         a = radius * (np.sqrt(3) / 2.0)
-#         dot1 = dy
-#         dot2 = (np.sqrt(3)/2.0)*dx - 0.5*dy
-#         dot3 = -(np.sqrt(3)/2.0)*dx - 0.5*dy
-#         inside = (np.abs(dot1) <= a) & (np.abs(dot2) <= a) & (np.abs(dot3) <= a)
-
-#     else:
-#         print(shape)
-#         raise ValueError("shape must be 'circle' or 'hex'")
-
-#     # Distance from each pixel to the nearest inside pixel (0 for inside)
-#     dist_outside = distance_transform_edt(~inside)
-
-#     # Never modify invalid cells
-#     allowed = (subtype_grid != invalid_code)
-    
-#     # === NEW: print counts per subtype under the electrode (inside & allowed) ===
-#     inside_allowed = inside & allowed
-#     counts_by_name = {}
-#     for name, code in name_to_code.items():
-#         if code == invalid_code:
-#             continue
-#         counts_by_name[name] = int(np.count_nonzero(inside_allowed & (subtype_grid == code)))
-#     print("Cells under electrode by subtype:", counts_by_name)
-#     changed = sum(counts_by_name.values())
-#     # === END NEW ===
-
-#     # ---------- Blend toward target per subtype with per-subtype weights ----------
-#     for code, target in code_to_val.items():
-#         mask_code = (subtype_grid == code) & allowed
-#         if not np.any(mask_code):
-#             continue
-
-#         # tie sigma to stimulation radius if no per-subtype override
-#         sigma_c = float(code_to_sigma.get(code, soft_sigma * radius))
-#         gain_c  = float(code_to_gain.get(code, 1.0))
-
-#         # Build per-subtype weight field
-#         w_code = np.zeros_like(out, dtype=float)
-
-#         # Inside: either full effect (=1) or scaled by gain (clipped)
-#         if scale_inside_by_gain:
-#             w_code[inside] = np.clip(gain_c, 0.0, 1.0)
-#         else:
-#             w_code[inside] = 1.0
-
-#         # Outside: Gaussian tail * gain, clipped to [0,1]
-#         if sigma_c > 0:
-#             w_out = gain_c * np.exp(-0.5 * (dist_outside / sigma_c) ** 2)
-#             if truncate is not None and truncate > 0:
-#                 w_out = np.where(dist_outside <= (truncate * sigma_c), w_out, 0.0)
-#             w_out = np.clip(w_out, 0.0, 1.0)
-#             w_code[~inside] = w_out[~inside]
-
-#         # Apply to this subtype only
-#         if np.any(mask_code):
-#             w_eff = w_code[mask_code]
-#             old   = out[mask_code]
-#             new   = old * (1.0 - w_eff) + target * w_eff
-#             out[mask_code] = new
-
-#     # ---------- Report changes ----------
-#     # before blur 
-#     print(f"Cells under electrode: {changed}")
-#     total_changed = np.count_nonzero(np.abs(out - before) > 1e-12)
-#     print(f"Cells affected: {total_changed}")
-#     if return_cells:
-#         return out, changed, total_changed
-#     return out
-
-
 
