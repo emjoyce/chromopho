@@ -7,17 +7,14 @@ import matplotlib.pyplot as plt
 import chromopho.mosaic as mosaic_mod
 from chromopho.bipolar_image import BipolarImageProcessor
 
-# -------------------------
-# CONFIGURATION (edit here)
-# grouped by the function/feature they configure
-# -------------------------
 
-# --- Mosaic / subtype parameters (used by build_mosaic) ---
+
+#  create the mosaic
 SEED = 0
 N_CELLS = 25000
 SHAPE = "circle"
 
-# receptive field / subtype tuning
+# cell type params
 ALPHA_CENTER = 1.0
 
 ALPHA_SURROUND_S = 0.5
@@ -41,13 +38,13 @@ NONLIN_ADAPT_CONES = True
 
 
 
-# --- Processing / output parameters (used by process_one_image) ---
+# output params
 SAVE_DTYPE = "float32"  # dtype for saved .npy arrays
 
-# optional amacrine blur applied to bipolar cell outputs (None -> disabled)
+# optional amacrine blur applied to bipolar cell outputs
 AMACRINE_SIGMA_BLUR = None
 
-# --- Parallel / runtime parameters (used by main) ---
+# parallel / runtime parameters (used by main) ---
 DEFAULT_WORKERS = 10   # explicit CLI override if set # conservative - i have 12 performance cores
 MAX_DEFAULT_WORKERS = None  # set to an int to cap auto-selection (e.g. 12)
 
@@ -65,7 +62,7 @@ def choose_default_workers(default=DEFAULT_WORKERS, max_cap=MAX_DEFAULT_WORKERS,
         n_use = min(n_use, max_cap)
     return n_use
 
-# --- I/O defaults (can be overridden by CLI) ---
+
 # DEFAULT_IMAGE_DIR = '/Users/emilyjoyce/repos/chromopho/chromopho/imgs/to_do_natural_400'
 # DEFAULT_OUTPUT_DIR = '/Users/emilyjoyce/repos/chromopho/chromopho/imgs/grid_output_old_params' 
 # DEFAULT_DONE_DIR = '/Users/emilyjoyce/repos/chromopho/chromopho/imgs/done_2'
@@ -95,11 +92,9 @@ DEFAULT_IMAGE_DIR = "/Users/emilyjoyce/repos/chromopho/chromopho/imgs/solid_colo
 DEFAULT_OUTPUT_DIR = "/Users/emilyjoyce/repos/chromopho/chromopho/imgs/sfn_manifold_feats"
 DEFAULT_DONE_DIR = "/Users/emilyjoyce/repos/chromopho/chromopho/imgs/done"
 
-# -------------------------
-# end CONFIGURATION
-# -------------------------
 
-# Worker-global mosaic (set in initializer)
+
+# Worker-global mosaic
 _WORK_MOSAIC = None
 
 def init_worker(m):

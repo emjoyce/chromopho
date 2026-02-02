@@ -12,7 +12,8 @@ class BipolarImageProcessor:
     dictating if the image should be fit to the mosaic or if the entire image should be seen by the mosaic. 
     """
 
-    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale', stimulation_mosaic = None, save_flat = True, amacrine_sigma_blur=None):
+    def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale', stimulation_mosaic = None, 
+    save_flat = True, amacrine_sigma_blur=None):
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
@@ -39,6 +40,65 @@ class BipolarImageProcessor:
             self.get_avg_color_map_per_pixel()
 
         # make the receptive field map 
+
+
+    def process_new_image(self, image, method='grayscale', save_flat=True,
+                          stimulation_mosaic=None, amacrine_sigma_blur=None,
+                          recompute_pixel_map=False):
+        """Reuse an existing receptive field map with a new image.
+
+        This keeps the existing mosaic-to-pixel mapping and just recomputes
+        bipolar responses for a new image, as long as the image height/width
+        matches the original image used to build this processor.
+
+        Parameters
+        ----------
+        image : np.ndarray
+            New RGB image array. Must have the same spatial dimensions as
+            the original image used when constructing this instance.
+        method : str, optional
+            Passed through to color / response computation (e.g. 'grayscale').
+        save_flat : bool, optional
+            If True, recompute and store per-cell outputs in
+            ``self.grid_outputs`` (same behavior as in __init__).
+        stimulation_mosaic : np.ndarray or None, optional
+            Optional stimulation mosaic to override normal color processing.
+        amacrine_sigma_blur : float or None, optional
+            If provided, overrides ``self.amacrine_sigma_blur`` for this
+            recomputation; otherwise the stored value is reused.
+        recompute_pixel_map : bool, optional
+            If True, recompute ``avg_subtype_response_per_pixel`` using the
+            existing receptive field map but the new image responses. This is
+            required before calling higher-level feature extraction that uses
+            per-pixel bipolar responses.
+        """
+        # ensure spatial dimensions match the mapping this processor was built on
+        old_h, old_w = self.image.shape[:2]
+        new_h, new_w = image.shape[:2]
+        if (old_h, old_w) != (new_h, new_w):
+            raise ValueError(
+                f"New image shape {image.shape[:2]} does not match original {self.image.shape[:2]}, 
+                new mapping failed"
+            )
+            return
+
+        # update state for the new image
+        self.image = image
+        self.stimulation_mosaic = stimulation_mosaic
+
+        # clear cached per-subtype filtered images so they are recomputed
+        self.bipolar_images = {}
+
+        # choose blur sigma for this pass
+        blur_sigma = self.amacrine_sigma_blur if amacrine_sigma_blur is None else amacrine_sigma_blur
+
+        # recompute per-cell outputs and optional flattened grid
+        self.get_all_average_colors(method=method, save_flat=save_flat, blur_sigma=blur_sigma)
+
+        # optionally recompute per-pixel subtype average response maps (default is False)
+        if recompute_pixel_map:
+            self.avg_subtype_response_per_pixel = {}
+            self.get_avg_color_map_per_pixel()
 
 
     def _fit_image_and_mosaic(self, return_minimum = False):
