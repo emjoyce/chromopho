@@ -547,3 +547,53 @@ def local_phosphene(
 
     return out
 
+def _place_implant(r, d, mosaic): 
+    '''
+    returns a list of flat-top hexagon implant center 
+    r: radius of hexagon measured 
+    from center of hex to corner d: distance between flat edges of hex
+    '''
+    # first: find the center point of mosaic: (m/2, m/2) 
+    # to do that, we need m (and n if they are not the same)
+    m = mosaic.grid.shape[0] 
+    n = mosaic.grid.shape[1] 
+
+    # what if m and or n are odd numbers? 
+    # we need coordinates to be whole numbers 
+    center_point = (m/2, n/2) 
+    # center_point = (int(np.round(m/2)), int(np.round(n/2))) 
+
+    # compute g: gap ratio 
+    g = 1+(d / (np.sqrt(3)*r))
+
+    # now we need to calculate the horizontal and vertical step
+    # these also need to be whole numbers
+    h_step = 3/2 * r * g 
+    v_step = np.sqrt(3) * r * g 
+
+    # initialize an array to store a list of location of centers 
+    centers = []
+
+    # calculate number of hexagon we can place in the given region 
+    numCol = int(m/(2*r))
+    numRow = int(n/(2*r))
+    print(numCol, numRow)
+
+    # calculate the actual location at the center of the hexagon depends on the i(column index), j(row index)
+    for i in range (-numCol, numCol): 
+        # print(i)
+        for j in range (-numRow, numRow):
+            # print(j)
+            x = center_point[0] + h_step * j
+            y = center_point[1] + v_step * (i+(j/2))
+
+            if 0 <= x < m-1 and 0 <= y < n-1:
+            
+                if mosaic.grid[int(np.round(x)),int(np.round(y))]!=-1:
+                    centers.append((x,y))
+
+    # Circle cutoff arr.pop(index) del arr[index]
+    # arr = [() for x in arr of x ]
+    # centers = centers[mosaic.grid != -1]
+            
+    return np.array(centers)
