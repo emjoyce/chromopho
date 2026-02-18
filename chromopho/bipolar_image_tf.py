@@ -116,6 +116,11 @@ def _srgb_to_linear_tf(x):
     return tf.where(x <= tf.cast(0.04045, x.dtype), x / tf.cast(12.92, x.dtype), tf.pow((x + a) / (1 + a), 2.4))
 
 
+def ste_clip(x, min, max): 
+    y = tf.clip_by_value(x, min, max) 
+    return x + tf.stop_gradient(y - x)
+
+
 def bipolar_image_filter_tf(
     rgb_image,
     center_cones,
@@ -184,7 +189,7 @@ def bipolar_image_filter_tf(
 
         adaptation_signal = _gaussian_blur_tf(lms_nonlin, sigma_adapt)
         gain = tf.reshape(sigma_tf, [1, 1, 3])
-        lms_nonlin_adapt = tf.clip_by_value(
+        lms_nonlin_adapt = ste_clip(
             lms_nonlin / (gain + adaptation_signal + tf.cast(1e-12, lms.dtype)),
             0.0,
             1.0,
@@ -217,8 +222,8 @@ def bipolar_image_filter_tf(
 
     center_blur = _gaussian_blur_tf(avg_center, center_sigma)
     surround_blur = _gaussian_blur_tf(avg_surround, surround_sigma)
-    center_blur = _round_to_decimals(center_blur, 12)
-    surround_blur = _round_to_decimals(surround_blur, 12)
+    # center_blur = _round_to_decimals(center_blur, 12)
+    # surround_blur = _round_to_decimals(surround_blur, 12)
 
     output = alpha_center * center_blur + alpha_surround * surround_blur
 
@@ -227,7 +232,7 @@ def bipolar_image_filter_tf(
     abs_min = min(alpha_center * pol_center, alpha_surround * pol_surround)
     abs_max = max(alpha_center * pol_center, alpha_surround * pol_surround)
 
-    output_normalized = tf.clip_by_value(
+    output_normalized = ste_clip(
         (output - abs_min) / (abs_max - abs_min),
         0.0,
         1.0,
@@ -237,7 +242,7 @@ def bipolar_image_filter_tf(
         return output_normalized
 
     def _nr_base(x, k, n):
-        x = tf.clip_by_value(x, 0.0, 1.0)
+        x = ste_clip(x, 0.0, 1.0)
         k = max(float(k), 1e-12)
         n = float(n)
         xn = tf.pow(x, n)
@@ -246,11 +251,11 @@ def bipolar_image_filter_tf(
 
     def on_rectifier_nr(x, k, n):
         s = 1.0 + k**n
-        return tf.clip_by_value(s * _nr_base(x, k, n), 0.0, 1.0)
+        return ste_clip(s * _nr_base(x, k, n), 0.0, 1.0)
 
     def off_rectifier_nr_high(x, k, n):
         s = 1.0 + k**n
-        return tf.clip_by_value(1.0 - s * _nr_base(1.0 - x, k, n), 0.0, 1.0)
+        return ste_clip(1.0 - s * _nr_base(1.0 - x, k, n), 0.0, 1.0)
 
     if pol_center > 0:
         output_rectified = on_rectifier_nr(output_normalized, on_k, on_n)
@@ -275,7 +280,7 @@ class BipolarImageProcessorTF:
     """
 
     def __init__(self, mosaic, image, fit_option = 'fit_mosaic', return_minimum_rf = False, method = 'greyscale', stimulation_mosaic = None, 
-    save_flat = True, amacrine_sigma_blur=None):
+    amacrine_sigma_blur=None):
         """
         Parameters:
         mosaic (BipolarMosaic): a BipolarMosaic object
@@ -301,15 +306,15 @@ class BipolarImageProcessorTF:
         self.build_receptive_fields = True
 
         self._fit_image_and_mosaic(return_minimum_rf)
-        self.get_all_average_colors(method = method, save_flat = save_flat, blur_sigma=self.amacrine_sigma_blur)
-        if save_flat == False:
-            self.avg_subtype_response_per_pixel = {}
-            self.get_avg_color_map_per_pixel()
+        self.get_all_average_colors(method = method, blur_sigma=self.amacrine_sigma_blur)
+
+        self.avg_subtype_response_per_pixel = {}
+        self.get_avg_color_map_per_pixel()
 
         # make the receptive field map 
 
 
-    def process_new_image(self, image, method='grayscale', save_flat=True,
+    def process_new_image(self, image, method='grayscale', 
                           stimulation_mosaic=None, amacrine_sigma_blur=None,
                           recompute_pixel_map=False):
         """Reuse an existing receptive field map with a new image.
@@ -325,9 +330,6 @@ class BipolarImageProcessorTF:
             the original image used when constructing this instance.
         method : str, optional
             Passed through to color / response computation (e.g. 'grayscale').
-        save_flat : bool, optional
-            If True, recompute and store per-cell outputs in
-            ``self.grid_outputs`` (same behavior as in __init__).
         stimulation_mosaic : np.ndarray or None, optional
             Optional stimulation mosaic to override normal color processing.
         amacrine_sigma_blur : float or None, optional
@@ -360,7 +362,7 @@ class BipolarImageProcessorTF:
         blur_sigma = self.amacrine_sigma_blur if amacrine_sigma_blur is None else amacrine_sigma_blur
 
         # recompute per-cell outputs and optional flattened grid
-        self.get_all_average_colors(method=method, save_flat=save_flat, blur_sigma=blur_sigma)
+        self.get_all_average_colors(method=method, blur_sigma=blur_sigma)
 
         # optionally recompute per-pixel subtype average response maps (default is False)
         if recompute_pixel_map:
@@ -643,7 +645,7 @@ class BipolarImageProcessorTF:
         return tf.stack(images, axis=0)
     
     # TODO: should rename this to something like get_all_cell_responses
-    def get_all_average_colors(self, method = 'grayscale', save_flat = False, blur_sigma=None):
+    def get_all_average_colors(self, method = 'grayscale', blur_sigma=None):
         """
         Returns the output of each bipolar cell in the mosaic.
         If stimulation mosaic is provided, bipass normal color filter stuff and set each cell's
@@ -698,22 +700,11 @@ class BipolarImageProcessorTF:
         # now scatter the cell outputs back onto the mosaic grid, -1 for empty cells
         h, w = self.mosaic.grid.shape
         valid_mask = tf.convert_to_tensor(self.mosaic.grid != -1)
-        base_grid = tf.scatter_nd(valid_coords_tf, cell_outputs, [h, w])
-        base_grid = tf.where(valid_mask, base_grid, tf.cast(-1.0, base_grid.dtype))
-        self.avg_colors_cell_grid = base_grid
-
-        if save_flat:
-            if method == 'lms':
-                print('unable to save flat lms output grid, set method to grayscale')
-                return 
-
-            grid_outputs = base_grid
-
-            # optionally apply masked gaussian blur (keeps invalid positions as -1)
-            if blur_sigma is not None:
-                grid_outputs = gaussian_blur_reflect_mask_tf(grid_outputs, sigma = blur_sigma)
-
-            self.grid_outputs = grid_outputs
+        grid_outputs = tf.scatter_nd(valid_coords_tf, cell_outputs, [h, w])
+        grid_outputs = tf.where(valid_mask, grid_outputs, tf.cast(-1.0, grid_outputs.dtype))
+        if blur_sigma is not None:
+            grid_outputs = gaussian_blur_reflect_mask_tf(grid_outputs, sigma = blur_sigma)
+        self.grid_outputs = grid_outputs
 
     def get_avg_colors_cell_map_numpy(self):
         """

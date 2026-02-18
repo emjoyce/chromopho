@@ -77,8 +77,7 @@ class BipolarImageProcessor:
         new_h, new_w = image.shape[:2]
         if (old_h, old_w) != (new_h, new_w):
             raise ValueError(
-                f"New image shape {image.shape[:2]} does not match original {self.image.shape[:2]}, 
-                new mapping failed"
+                f"New image shape {image.shape[:2]} does not match original {self.image.shape[:2]}, new mapping failed"
             )
             return
 
