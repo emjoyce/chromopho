@@ -597,3 +597,155 @@ def _place_implant(r, d, mosaic):
     # centers = centers[mosaic.grid != -1]
             
     return np.array(centers)
+
+
+
+def local_phosphene_multi(
+    mosaic_grid: np.ndarray,
+    mosaic_background_values,
+    centers_ij,                           
+    radius: float,
+    shape: str = "hex",                  
+    values_by_subtype: dict = None,
+    subtype_dict: dict = None,
+    invalid_code: int = -1,
+    soft_sigma: float = 0.1,
+    truncate: float = 5.0,
+    response_gain_by_subtype: dict = None,
+    sigma_by_subtype: dict = None,
+    scale_inside_by_gain: bool = False,
+    in_place: bool = False,
+    return_cells: bool = False,
+    amacrine_blur: bool = False,          
+    amacrine_blur_kwargs: dict = None     
+):
+    """
+    Multi-electrode version of local_phosphene:
+      - centers_ij: list of (i,j) centers
+      - builds a UNION mask of all hexes/circles
+      - Gaussian falloff computed from distance to nearest inside pixel of the union
+
+    If mosaic_background_values is None, will load black_bipolar_outputs.npy (same as your function).
+    """
+
+    if subtype_dict is None:
+        subtype_dict = {
+            'm_off': 1, 'm_on': 2, 'l_off': 3, 'l_on': 4,
+            's_off': 5, 's_on': 6, 'dif_on': 7, 'dif_off': 8, 'none': -1
+        }
+
+    if mosaic_background_values is None:
+        data_file = Path(__file__).resolve().parent / "mosaic_outputs" / "black_bipolar_outputs.npy"
+        mosaic_background_values = np.load(data_file)
+
+    if values_by_subtype is None or soft_sigma <= 0:
+        return mosaic_background_values
+
+    H, W = mosaic_background_values.shape
+    out = mosaic_background_values if in_place else mosaic_background_values.copy()
+    before = out.copy()
+
+    def _map_dict_any(d):
+        if d is None:
+            return {}
+        mapped = {}
+        for k, v in d.items():
+            if isinstance(k, str):
+                if k in subtype_dict:
+                    mapped[subtype_dict[k]] = float(v)
+            else:
+                mapped[int(k)] = float(v)
+        return mapped
+
+    code_to_val   = _map_dict_any(values_by_subtype)
+    code_to_gain  = _map_dict_any(response_gain_by_subtype)
+    code_to_sigma = _map_dict_any(sigma_by_subtype)
+
+    yy, xx = np.ogrid[:H, :W]
+    inside = np.zeros((H, W), dtype=bool)
+
+    # if radius == 1 force circle 
+    shape_use = "circle" if radius == 1 else shape.lower()
+
+    for (i, j) in centers_ij:
+        dy = yy - i
+        dx = xx - j
+
+        if shape_use == "circle":
+            inside_k = (dx*dx + dy*dy) <= (radius*radius)
+
+        elif shape_use == "hex":
+            # Flat-bottom / flat-top hex with horizontal flats
+            a = radius * (np.sqrt(3) / 2.0)
+            dot1 = dy
+            dot2 = (np.sqrt(3)/2.0)*dx - 0.5*dy
+            dot3 = -(np.sqrt(3)/2.0)*dx - 0.5*dy
+            inside_k = (np.abs(dot1) <= a) & (np.abs(dot2) <= a) & (np.abs(dot3) <= a)
+
+        else:
+            raise ValueError("shape must be 'circle' or 'hex'")
+
+        inside |= inside_k
+
+    # Distance from each pixel to the nearest inside pixel (0 for inside)
+    dist_outside = distance_transform_edt(~inside)
+
+    # Never modify invalid cells
+    allowed = (mosaic_grid != invalid_code)
+
+    counts_by_name = {}
+    changed = 0
+    if return_cells:
+        inside_allowed = inside & allowed
+        for name, code in subtype_dict.items():
+            if code == invalid_code:
+                continue
+            counts_by_name[name] = int(np.count_nonzero(inside_allowed & (mosaic_grid == code)))
+
+        print("Cells under (union) electrodes by subtype:", counts_by_name)
+        changed = sum(counts_by_name.values())
+
+    for code, target in code_to_val.items():
+        mask_code = (mosaic_grid == code) & allowed
+        if not np.any(mask_code):
+            continue
+
+        sigma_c = float(code_to_sigma.get(code, soft_sigma * radius))
+        gain_c  = float(code_to_gain.get(code, 1.0))
+
+        w_code = np.zeros_like(out, dtype=float)
+
+        # Inside weight
+        if scale_inside_by_gain:
+            w_code[inside] = np.clip(gain_c, 0.0, 1.0)
+        else:
+            w_code[inside] = 1.0
+
+        # Outside Gaussian tail
+        if sigma_c > 0:
+            w_out = gain_c * np.exp(-0.5 * (dist_outside / sigma_c) ** 2)
+            if truncate is not None and truncate > 0:
+                w_out = np.where(dist_outside <= (truncate * sigma_c), w_out, 0.0)
+            w_out = np.clip(w_out, 0.0, 1.0)
+            w_code[~inside] = w_out[~inside]
+
+        # Apply only to this subtype
+        w_eff = w_code[mask_code]
+        old   = out[mask_code]
+        out[mask_code] = old * (1.0 - w_eff) + target * w_eff
+
+
+    if amacrine_blur:
+        if amacrine_blur_kwargs is None:
+            amacrine_blur_kwargs = dict(sigma=2, beta=0.15, same_polarity_unsharp=False)
+
+        out = amacrine_crossover_minimal(out, mosaic_grid, subtype_dict, **amacrine_blur_kwargs)
+
+
+    if return_cells:
+        total_changed = np.count_nonzero(np.abs(out - before) > 1e-12)
+        print(f"Cells under (union) electrodes: {changed}")
+        print(f"Cells affected: {total_changed}")
+        return out, changed, total_changed
+
+    return out
