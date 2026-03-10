@@ -6,15 +6,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import chromopho.mosaic as mosaic_mod
-from chromopho.bipolar_image import BipolarImageProcessor
+from chromopho.bipolar_image_tf import BipolarImageProcessorTF
 from chromopho.feature_extraction import extract_features
 from chromopho.utils import save_structured_features
 
 
 
+
 # create mosaic
 SEED = 0
-N_CELLS = 25000
+N_CELLS = 2500
 SHAPE = "circle"
 
 # set subtype params
@@ -39,22 +40,33 @@ OFF_N = 1.5
 
 NONLIN_ADAPT_CONES = True
 
-
-FEATURE_METHOD = "grayscale"  # passed into BipolarImageProcessor / extract_features
-
-# parallel / runtime parameters
+FEATURE_METHOD = "grayscale"
 DEFAULT_WORKERS = 10
-MAX_DEFAULT_WORKERS = None  # set to an int to cap auto-selection
+MAX_DEFAULT_WORKERS = None
+WHITE_IMG_SIZE = 126
 
-# make default img, size should match img size that we extract bipolar mosaic responses from 
-WHITE_IMG_SIZE = 400  # script assumes H=W=400 for mapping
+
+
+# output params
+SAVE_DTYPE = "float32"  # dtype for saved .npy arrays
+
+# optional amacrine blur applied to bipolar cell outputs
+AMACRINE_SIGMA_BLUR = None
+
+
+
+DEFAULT_IMAGE_DIR = "/Users/emilyjoyce/repos/chromopho/chromopho/imgs/ece_class_imgs"
+# DEFAULT_IMAGE_DIR ='/Users/emilyjoyce/repos/chromopho/chromopho/imgs/tst_ece'
+DEFAULT_OUTPUT_DIR = "/Users/emilyjoyce/repos/chromopho/chromopho/imgs/ece_feats"
+DEFAULT_DONE_DIR = "/Users/emilyjoyce/repos/chromopho/chromopho/imgs/ece_done"
+
 
 
 def choose_default_workers(default=DEFAULT_WORKERS, max_cap=MAX_DEFAULT_WORKERS, leave_free=1):
-    """Return number of worker processes to use.
-
-    If default is a positive int, return it; otherwise use logical_cpu_count - leave_free,
-    optionally capped by max_cap.
+    """
+    Return number of worker processes to use:
+    - If default is a positive int, return it.
+    - Otherwise use (logical_cpu_count - leave_free), optionally capped by max_cap.
     """
     if isinstance(default, int) and default > 0:
         return default
@@ -63,9 +75,6 @@ def choose_default_workers(default=DEFAULT_WORKERS, max_cap=MAX_DEFAULT_WORKERS,
     if isinstance(max_cap, int) and max_cap > 0:
         n_use = min(n_use, max_cap)
     return n_use
-
-
-
 
 def build_mosaic():
     """Build the BipolarMosaic using the same configuration as run_parallel_feat_export."""
@@ -206,31 +215,21 @@ def build_mosaic():
     )
     return mosaic
 
-
-
-
+# Worker-global state (set inside init_worker in each process)
 _WORK_MOSAIC = None
 _WORK_BIP = None
-_WORK_WHITE_SHAPE = None
+_WORK_WHITE_SHAPE = (WHITE_IMG_SIZE, WHITE_IMG_SIZE)
 
-
-def init_worker(mosaic, white_shape):
-    """Initializer for each worker process: build mosaic + mapping from white image.
-
-    Each worker constructs a BipolarImageProcessor once using a 400x400 all-white
-    RGB image to define the mosaic->pixel mapping. Subsequent images reuse that
-    mapping via process_new_image.
-    """
+def init_worker(mosaic):
+    """Initializer for each worker process: build mosaic + mapping from white image."""
     global _WORK_MOSAIC, _WORK_BIP, _WORK_WHITE_SHAPE
     _WORK_MOSAIC = mosaic
-    _WORK_WHITE_SHAPE = tuple(white_shape)
 
     h, w = _WORK_WHITE_SHAPE
     white_img = np.ones((h, w, 3), dtype=float)
 
-    # Build the processor once; this creates the receptive field map.
-    _WORK_BIP = BipolarImageProcessor(_WORK_MOSAIC, white_img, save_flat=False)
-
+    # Use TF-based processor here
+    _WORK_BIP = BipolarImageProcessorTF(_WORK_MOSAIC, white_img)
 
 def process_one_image(img_path, output_dir, done_dir, verbose):
     """Process a single image using worker-global BipolarImageProcessor mapping."""
@@ -242,8 +241,7 @@ def process_one_image(img_path, output_dir, done_dir, verbose):
     h_expected, w_expected = _WORK_WHITE_SHAPE
     if img.shape[0] != h_expected or img.shape[1] != w_expected:
         raise ValueError(
-            f"Image {img_path} has shape {img.shape[:2]}, expected {(h_expected, w_expected)}.
-            Failed to extract features (!!!!!)"
+            f"Image {img_path} has shape {img.shape[:2]}, expected {(h_expected, w_expected)}.Failed to extract features (!!!!!)"
         )
         return # 
 
@@ -251,48 +249,39 @@ def process_one_image(img_path, output_dir, done_dir, verbose):
     _WORK_BIP.process_new_image(
         img,
         method=FEATURE_METHOD,
-        save_flat=False,
         stimulation_mosaic=None,
         amacrine_sigma_blur=None,
         recompute_pixel_map=True,
     )
 
-    # extract per-pixel features using existing helper.
-    features_array, labels_array = extract_features(_WORK_BIP, return_labels=True)
+
+    grid_outputs = np.asarray(_WORK_BIP.grid_outputs)
 
     # save results 
     filename_base = os.path.splitext(os.path.basename(img_path))[0]
-    save_structured_features(features_array, output_dir, filename_base, "_features.npy")
-    save_structured_features(labels_array, output_dir, filename_base, "_labels.npy")
+    out_path = os.path.join(output_dir, filename_base + '_mosaic_output.npy')
+    np.save(out_path, grid_outputs.astype(SAVE_DTYPE))
+    
 
-    # Move image to done_dir 
+    # move processed image to done_dir (best-effort)
+    
     try:
         os.replace(img_path, os.path.join(done_dir, os.path.basename(img_path)))
     except Exception:
         if verbose:
             print(f"Warning: could not move {img_path} to {done_dir}")
 
-    if verbose:
-        print(f"Saved features for {img_path}")
-
-    return filename_base
-
-
-
-
+    return out_path
 
 def main():
-    parser = argparse.ArgumentParser(
-        description=(
-            "Parallel feature extraction using a BipolarMosaic with a fixed "
-            "400x400 pixel mapping (built from an all-white image)."
-        )
-    )
-    parser.add_argument("--image_dir", required=True, help="Directory of input .png images (400x400).")
-    parser.add_argument("--output_dir", required=True, help="Directory to save feature arrays.")
-    parser.add_argument("--done_dir", required=True, help="Directory to move processed images into.")
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    parser.add_argument("--verbose", action="store_true", default=False)
+    parser = argparse.ArgumentParser(description="Parallel export mosaic outputs")
+    parser.add_argument('--image_dir', default=DEFAULT_IMAGE_DIR)
+    parser.add_argument('--output_dir', default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument('--done_dir', default=DEFAULT_DONE_DIR)
+    parser.add_argument('--workers', type=int, default=DEFAULT_WORKERS)
+    parser.add_argument('--amacrine_sigma_blur', type=float, default=AMACRINE_SIGMA_BLUR,
+                        help='Optional masked amacrine blur applied to output of bipolar cells (None disables)')
+    parser.add_argument('--verbose', action='store_true', default=False)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -300,36 +289,22 @@ def main():
 
     mosaic = build_mosaic()
 
-    img_paths = [
-        os.path.join(args.image_dir, fn)
-        for fn in os.listdir(args.image_dir)
-        if fn.lower().endswith(".png")
-    ]
+    img_paths = [os.path.join(args.image_dir, fn) for fn in os.listdir(args.image_dir) if fn.lower().endswith('.png')]
     if args.verbose:
         print(f"Found {len(img_paths)} images")
 
     workers = args.workers if (args.workers and args.workers > 0) else choose_default_workers()
 
-    white_shape = (WHITE_IMG_SIZE, WHITE_IMG_SIZE)
-
-    with ProcessPoolExecutor(
-        max_workers=workers,
-        initializer=init_worker,
-        initargs=(mosaic, white_shape),
-    ) as ex:
-        futures = {
-            ex.submit(process_one_image, p, args.output_dir, args.done_dir, args.verbose): p
-            for p in img_paths
-        }
+    with ProcessPoolExecutor(max_workers=workers, initializer=init_worker, initargs=(mosaic,)) as ex:
+        futures = {ex.submit(process_one_image, p, args.output_dir, args.done_dir, args.verbose): p for p in img_paths}
         for fut in as_completed(futures):
             p = futures[fut]
             try:
-                _ = fut.result()
+                out = fut.result()
                 if args.verbose:
-                    print(f"Done {p}")
+                    print(f"Done {p} -> {out}")
             except Exception as e:
                 print(f"Error processing {p}: {e}")
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
