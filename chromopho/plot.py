@@ -5,6 +5,7 @@ from scipy.ndimage import gaussian_filter, distance_transform_edt
 from .utils import _parse_cone_string, gaussian_blur_reflect_mask, amacrine_crossover_minimal
 from collections import defaultdict
 from pathlib import Path
+import tensorflow as tf
 
 
 def center_x_plot(r, n, mosaic, n_cells_mosaic = 25000):
@@ -172,6 +173,7 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     [0.313, 0.639, 0.048],  # L
     [0.155, 0.757, 0.088],  # M 
     [0.017, 0.109, 0.874]])):   # S 
+
     '''returns a grayscale image showing how a bipolar cell of a subtype would respond to the input rgb image'''
     if rgb_image.shape[-1] == 4:
         alpha_mask = rgb_image[..., -1] == 0
@@ -418,6 +420,7 @@ def local_phosphene(
     sigma_by_subtype: dict = None,          # absolute override per subtype (in pixels)
     scale_inside_by_gain: bool = False,     
     in_place: bool = False,
+    as_tensor = False,
     return_cells = False, # if true return the number of cells changed 
     amacrine_blur = True
     ):
@@ -540,11 +543,27 @@ def local_phosphene(
         print(f"Cells under electrode: {changed}")
         total_changed = np.count_nonzero(np.abs(out - before) > 1e-12)
         print(f"Cells affected: {total_changed}")
+        if as_tensor:
+            valid_mask = (out != -1)
+            valid_coords = np.argwhere(valid_mask).astype(np.int32)
+            valid_coords_tf = tf.convert_to_tensor(valid_coords, dtype=tf.int32)
+            out = tf.gather_nd(out, valid_coords_tf)
         return out, changed, total_changed
     if amacrine_blur:
+        if as_tensor:
+            valid_mask = (out != -1)
+            valid_coords = np.argwhere(valid_mask).astype(np.int32)
+            valid_coords_tf = tf.convert_to_tensor(valid_coords, dtype=tf.int32)
+            out = tf.gather_nd(out, valid_coords_tf)
+
         out = amacrine_crossover_minimal(out, mosaic_grid, subtype_dict, sigma =2, beta = .15, 
                                                same_polarity_unsharp=False)
-
+    if as_tensor:
+        valid_mask = (out != -1)
+        valid_coords = np.argwhere(valid_mask).astype(np.int32)
+        valid_coords_tf = tf.convert_to_tensor(valid_coords, dtype=tf.int32)
+        out = tf.gather_nd(out, valid_coords_tf)
+    
     return out
 
 def _place_implant(r, d, mosaic): 

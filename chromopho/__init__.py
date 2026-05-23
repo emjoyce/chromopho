@@ -5,4 +5,5 @@ from . import feature_extraction
 from . import model
 from . import utils
 from . import local_nn_model
+from . import bipolar_image_tf
 # from .imgs import img_finder

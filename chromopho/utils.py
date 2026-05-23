@@ -1,6 +1,8 @@
 import numpy as np
 import os
 from scipy.ndimage import gaussian_filter, distance_transform_edt
+from scipy.integrate import trapezoid, cumulative_trapezoid
+from scipy.stats import gaussian_kde
 
 
 def _parse_cone_string(cone_string):
@@ -136,16 +138,8 @@ def gaussian_blur_reflect_mask(arr, sigma):
 
 import numpy as np
 
-def amacrine_crossover_minimal(
-    x,
-    mosaic,
-    mosaic_subtype_dict,
-    sigma=1.5,
-    beta=0.25,
-    same_polarity_unsharp=False,
-    alpha=0.10,
-    sigma_n=1.0,
-    rectify=True
+def amacrine_crossover_minimal(x, mosaic, mosaic_subtype_dict, sigma=1.5,
+    beta=0.25, same_polarity_unsharp=False, alpha=0.10, sigma_n=1.0, rectify=True
 ):
     """
     Minimal amacrine-like static effect with *masked, renormalized* Gaussians.
@@ -178,7 +172,7 @@ def amacrine_crossover_minimal(
         Updated mosaic; invalid = -1.
     """
 
-    # ---- helpers ----
+    # helpers
     def masked_gaussian(src_vals, src_mask, out_where, sigma):
         """
         Normalized convolution: (G * (src_vals * src_mask)) / (G * src_mask)
@@ -205,7 +199,7 @@ def amacrine_crossover_minimal(
         y[src_mask] = src_vals[src_mask] - alpha * blurred[src_mask]
         return y
 
-    # ---- polarity masks ----
+    # polarity masks
     on_ids  = {v for k, v in mosaic_subtype_dict.items() if 'on'  in k.lower()}
     off_ids = {v for k, v in mosaic_subtype_dict.items() if 'off' in k.lower()}
 
@@ -214,11 +208,11 @@ def amacrine_crossover_minimal(
     off_mask   = valid_mask & np.isin(mosaic, list(off_ids))
     other_mask = valid_mask & ~(on_mask | off_mask)
 
-    # Extract polarity maps (others stay -1)
+    # Extract polarity maps (noncell stay -1)
     x_on  = np.full_like(x, -1.0); x_on[on_mask]   = x[on_mask]
     x_off = np.full_like(x, -1.0); x_off[off_mask] = x[off_mask]
 
-    # ---- masked crossover blurs ----
+    # masked crossover blurs
     # OFF pooled only from OFF cells, sampled only at ON cells
     off_blur_at_on = masked_gaussian(
         src_vals=np.where(off_mask, x, 0.0),
@@ -234,22 +228,152 @@ def amacrine_crossover_minimal(
         sigma=sigma
     )
 
-    # ---- crossover inhibition ----
+    # crossover inhibition 
     y = np.full_like(x, -1.0)
     y[on_mask]  = x[on_mask]  - beta * off_blur_at_on[on_mask]
     y[off_mask] = x[off_mask] - beta * on_blur_at_off[off_mask]
     y[other_mask] = x[other_mask]  # pass through any non-ON/OFF types
 
-    # ---- optional: same-polarity unsharp (also masked & renormalized) ----
+    # same-polarity unsharp (also masked & renormalized) if same_polarity_unsharp
     if same_polarity_unsharp:
         y_on_sharp  = masked_unsharp(y, on_mask,  alpha=alpha, sigma=sigma_n)
         y_off_sharp = masked_unsharp(y, off_mask, alpha=alpha, sigma=sigma_n)
         y[on_mask]  = y_on_sharp[on_mask]
         y[off_mask] = y_off_sharp[off_mask]
 
-    # ---- optional: rectify within polarity maps ----
+    # rectify within polarity maps if rectify
     if rectify:
         y[on_mask]  = np.maximum(0.0, y[on_mask])
         y[off_mask] = np.maximum(0.0, y[off_mask])
 
     return y
+
+
+# functions that allow each subtype to sample center surround relative weight
+
+def bounded_log_kde_curve(data, n_grid=600, bw=1.0, pad_frac=0.05, 
+                          taper_power=0.35):
+    """
+    func that creates a fitted kde curve around data
+    data is center/surround ratios for midget or diffuse cells from Dacey 2000 paper 
+    
+    - Fits KDE in log space
+    - Evaluates density back in ratio space using the Jacobian correction
+    - Forces density to zero at a lower/upper support near the data range
+    - Renormalizes so the area under the curve is 1
+    parameters:
+    - data: 1D array of ratio samples
+    - n_grid: number of points to evaluate the curve on
+    - bw: bandwidth multiplier for KDE
+    - pad_frac: fraction of data range to pad on each side for support limits
+    - taper_power: exponent for smooth tapering to zero at support limits
+    returns:
+    - x: (n_grid,) array of ratio values where the curve is evaluated
+    - y: (n_grid,) array of density values corresponding to x
+    - lo: lower support limit
+    - hi: upper support limit
+    """
+    data = np.asarray(data, dtype=float)
+    data_range = data.max() - data.min()
+
+    lo = max(1e-6, data.min() - pad_frac * data_range)
+    hi = data.max() + pad_frac * data_range
+
+    x = np.linspace(lo, hi, n_grid)
+
+    z = np.log(data)
+    kde = gaussian_kde(z)
+    kde.set_bandwidth(kde.factor * bw)
+
+    # log density transformed back to ratio density
+    y = kde(np.log(x)) / x
+
+    # smooth finite support taper: to 0 at lo and hi
+    t = (x - lo) / (hi - lo)
+    window = np.sin(np.pi * t) ** taper_power
+    y = y * window
+
+    # normalize
+    area = trapezoid(y, x)
+    y = y / area
+
+    return x, y, lo, hi
+
+def make_surround_center_bins(cell_type,n_bins=5,
+    midget_samples=(1.0, 0.9, 0.7, 1.1),
+    diffuse_samples=(1.7, 0.8, 1.3, 0.9, 2.0, 2.8, 0.8, 1.3),
+    bw=1, pad_frac=0.16, taper_power=0.55):
+    """
+    func that makes n bins to create discrete sampling of center surround ratios
+    for midget or diffuse cells, based on the Dacey 2000 data and a KDE fit to that data
+    parameters:
+    - cell_type: 'midget' or 'diffuse'
+    - n_bins: number of bins to create
+    - midget_samples: tuple of center/surround ratios for midget cells
+    - diffuse_samples: tuple of center/surround ratios for diffuse cells
+    - bw: bandwidth multiplier for KDE
+    - pad_frac: fraction of data range to pad on each side for support limits
+    - taper_power: exponent for smooth tapering to zero at support limits
+    """
+
+    if cell_type == "midget":
+        data = np.array(midget_samples, dtype=float)
+    elif cell_type == "diffuse":
+        data = np.array(diffuse_samples, dtype=float)
+    else:
+        raise ValueError("cell_type must be 'midget' or 'diffuse'")
+
+    x, y, lo, hi = bounded_log_kde_curve(data,
+        bw=bw,pad_frac=pad_frac,taper_power=taper_power)
+
+    # Equal width bins 
+    bin_edges = np.linspace(lo, hi, n_bins + 1)
+
+    bin_values = []
+    bin_probs = []
+
+    for i in range(n_bins):
+        left = bin_edges[i]
+        right = bin_edges[i + 1]
+
+        mask = (x >= left) & (x <= right)
+        x_bin = x[mask]
+        y_bin = y[mask]
+
+        prob = trapezoid(y_bin, x_bin)
+
+        # representative value is density-weighted mean within bin
+        val = trapezoid(x_bin * y_bin, x_bin) / prob
+
+        bin_values.append(val)
+        bin_probs.append(prob)
+
+    bin_values = np.array(bin_values)
+    bin_probs = np.array(bin_probs)
+    bin_probs = bin_probs / bin_probs.sum()
+
+    return bin_values, bin_probs
+
+def sample_surround_center_ratio_binned(cell_type, n=1, n_bins=5,
+    midget_samples=(1.0, 0.9, 0.7, 1.1),
+    diffuse_samples=(1.7, 0.8, 1.3, 0.9, 2.0, 2.8, 0.8, 1.3)):
+    """
+    samples n surround/center ratios for midges or diffuse cell type
+    first fits a kde to fit Dacey 2000 data, then creates n_bins bins 
+    sampling that curve, then samples from those bins
+    parameters:
+    - cell_type: 'midget' or 'diffuse'
+    - n: number of samples to pull
+    - n_bins: number of bins to create
+    - midget_samples: tuple of center/surround ratios for midget cells
+    - diffuse_samples: tuple of center/surround ratios for diffuse cells
+    returns:
+    - samples: (n,) array of sampled center/surround ratios
+    """
+    rng = np.random.default_rng(0)
+
+    bin_values, bin_probs = make_surround_center_bins(cell_type,
+        n_bins=n_bins, midget_samples=midget_samples,
+        diffuse_samples=diffuse_samples)
+
+    return rng.choice(bin_values, size=n, replace=True, p=bin_probs)

@@ -2,6 +2,7 @@ import numpy as np
 from matplotlib.colors import ListedColormap
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import cKDTree
+import matplotlib.pyplot as plt
 
 
 
@@ -39,6 +40,7 @@ class BipolarSubtype:
 
         self.color_filter_params = color_filter_params
         _defaults = {
+            'family': 'diffuse',
             'center_sigma': 1.0,
             'surround_sigma': 3.0,
             'alpha_center': 1.0,
@@ -133,7 +135,7 @@ class BipolarMosaic:
                 return width, height
         elif self.shape == 'circle':
             if self.radius:
-                return radius
+                return self.radius
             else:
                 # calculate the best radius for circle
                 return int(np.round(np.sqrt(self.num_cells / np.pi)))
@@ -196,7 +198,7 @@ class BipolarMosaic:
 
     # optimization function for spreading out each subtype more evenly within mosaic
     def _density_swap(bipolar_mosaic, percent_swapped = .07, sigma = .88, max_iter = 1000, track_obj = False, objective_by_type = False,
-                                window = 150, epsilon = .005):
+                                window = 150, epsilon = .005, center_s_sigma=12, s_perc = .04):
         #######################################################################
         ### helper funcs:
         def get_extreme_density_coords(smoothed, n_pairs):
@@ -243,10 +245,10 @@ class BipolarMosaic:
             return np.array(kept_coords)
         
         
-        def get_sigma_it(it, max_iter, sigma_start, floor = .5, p = 2):
-            progress = it / max_iter
-            decay = floor + (1-floor)*(1 - progress**p)
-            return sigma_start * decay
+        # def get_sigma_it(it, max_iter, sigma_start, floor = .5, p = 2):
+        #     progress = it / max_iter
+        #     decay = floor + (1-floor)*(1 - progress**p)
+        #     return sigma_start * decay
         
         def test_stop(objective_history, window = 75, epsilon = .001):
             # checks if the objective is still making reasonable progress compared to the recent history 
@@ -258,7 +260,22 @@ class BipolarMosaic:
             current_val = objective_history[-1]
             return abs(current_val - recent_avg) < epsilon
             
-        def get_smoothed_density(bipolar_grid, target_subtype, sigma = 2):
+        # def get_smoothed_density(bipolar_grid, target_subtype, sigma = 2):
+        
+        #     # get a mask of valid cells 
+        #     nonviable_mask = bipolar_grid == -1
+        #     # mask of cells of the subtype 
+        #     subtype_mask = (bipolar_grid == target_subtype).astype(float)
+        
+        #     smoothed = gaussian_filter(subtype_mask, sigma = sigma)
+        
+        #     smoothed[nonviable_mask] = -1
+        #     # also return the number of cells in that subtype for later on, when we use this function. 
+        #     # prevents us from calculating this value twice 
+        #     return smoothed, np.sum(subtype_mask)
+        # updated to handle S scotoma
+        def get_smoothed_density(bipolar_grid, target_subtype, sigma = 2, s_subtypes = [5,6], center_s_sigma=center_s_sigma, 
+                                s_perc = s_perc):
         
             # get a mask of valid cells 
             nonviable_mask = bipolar_grid == -1
@@ -267,11 +284,34 @@ class BipolarMosaic:
         
             smoothed = gaussian_filter(subtype_mask, sigma = sigma)
         
-            smoothed[nonviable_mask] = -1
             # also return the number of cells in that subtype for later on, when we use this function. 
             # prevents us from calculating this value twice 
-            return smoothed, np.sum(subtype_mask)
+            # add a gaussian at the center
+            if target_subtype in s_subtypes:
+                
+                # then this cell is an s connected bipolar, and we should avoid the center a bit
+                center_i, center_j = int(bipolar_grid.shape[0]/2), int(bipolar_grid.shape[1]/2)
+            
         
+                # calculate the number of cells to place 
+                n_pts = int(np.sum(subtype_mask)*s_perc)
+                
+                # sample rows and columns of the mosaic according to a gaussian around the center s scotoma 
+                sampled_rows = np.random.normal(loc = center_i, scale = center_s_sigma, size = n_pts).astype(int)
+                sampled_cols = np.random.normal(loc = center_j, scale = center_s_sigma, size = n_pts).astype(int)
+        
+                # throw out anything outside of viable cells 
+                rc_mask = (sampled_rows<bipolar_grid.shape[0]) & (sampled_cols<bipolar_grid.shape[1])
+                sampled_rows = sampled_rows[rc_mask]
+                sampled_cols = sampled_cols[rc_mask]
+                sampled_viable = ~nonviable_mask[sampled_rows, sampled_cols]
+                subtype_mask[sampled_rows[sampled_viable], sampled_cols[sampled_viable]] = 1.0
+            
+            smoothed = gaussian_filter(subtype_mask, sigma = sigma)
+            smoothed[nonviable_mask] = -1
+            
+            return smoothed, np.sum(subtype_mask)
+            
         def total_objective(grid, per_subtype = False):
             subtypes = np.unique(grid)
             # exclude -1, which indicates a blank cell
@@ -295,7 +335,7 @@ class BipolarMosaic:
             if per_subtype:
                 return obj_list
             return total_objective/len(subtypes)
-        ### end helper funcs
+        ### end density swap helper funcs
         #######################################################################
 
         

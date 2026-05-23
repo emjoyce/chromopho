@@ -34,7 +34,7 @@ class BipolarImageProcessor:
         self.amacrine_sigma_blur = amacrine_sigma_blur
 
         self._fit_image_and_mosaic(return_minimum_rf)
-        self.get_all_average_colors(method = method, save_flat = save_flat, blur_sigma=self.amacrine_sigma_blur)
+        self.get_all_cell_responses(method = method, save_flat = save_flat, blur_sigma=self.amacrine_sigma_blur)
         if save_flat == False:
             self.avg_subtype_response_per_pixel = {}
             self.get_avg_color_map_per_pixel()
@@ -92,7 +92,7 @@ class BipolarImageProcessor:
         blur_sigma = self.amacrine_sigma_blur if amacrine_sigma_blur is None else amacrine_sigma_blur
 
         # recompute per-cell outputs and optional flattened grid
-        self.get_all_average_colors(method=method, save_flat=save_flat, blur_sigma=blur_sigma)
+        self.get_all_cell_responses(method=method, save_flat=save_flat, blur_sigma=blur_sigma)
 
         # optionally recompute per-pixel subtype average response maps (default is False)
         if recompute_pixel_map:
@@ -387,7 +387,7 @@ class BipolarImageProcessor:
     
     # TODO: should rename this to something like bipolar cell output, but currently it can also be used to 
     # output the color info SEEN by each bipolar subtype... need to think about this 
-    def get_all_average_colors(self, method = 'grayscale', save_flat = False, blur_sigma=None):
+    def get_all_cell_responses(self, method = 'grayscale', save_flat = False, blur_sigma=None):
         """
         Returns a dictionary of the average color of the pixels in the receptive field of each cell in the mosaic
         if stimulation mosaic is provided, bipass normal color filter stuff and set each cell's
@@ -397,19 +397,19 @@ class BipolarImageProcessor:
         - blur_sigma: if provided, apply gaussian_blur_reflect_mask with this sigma to the flattened grid to simulate simple amacrine cells
         """
         stimulation_mosaic = self.stimulation_mosaic
-        avg_colors_cell_map = {}
+        cell_response_map = {}
         for i in range(self.mosaic.grid.shape[0]):
             for j in range(self.mosaic.grid.shape[1]):
                 # only continue if this i,j belongs to an actual cell in mosaic
                 if self.mosaic.grid[i,j] == -1:
                     continue
                 if stimulation_mosaic is None:
-                    avg_colors_cell_map[(i, j)] = self.compute_cell_output(i, j, method = method)
+                    cell_response_map[(i, j)] = self.compute_cell_output(i, j, method = method)
                 else:
                     stim_val = stimulation_mosaic[i, j]
-                    avg_colors_cell_map[(i, j)] = np.array([stim_val])
+                    cell_response_map[(i, j)] = np.array([stim_val])
                     
-        self.avg_colors_cell_map = avg_colors_cell_map
+        self.cell_response_map = cell_response_map
 
         if save_flat:
             if method == 'lms':
@@ -419,10 +419,10 @@ class BipolarImageProcessor:
             # -1 for empty cells (like grid)
             cell_grid = np.full((h, w), -1.0, dtype=float)
 
-            if avg_colors_cell_map:
+            if cell_response_map:
                 # vectorized conversion of dict -> index arrays + value array
-                keys = np.array(list(avg_colors_cell_map.keys()), dtype=int)  
-                vals = np.array(list(avg_colors_cell_map.values()), dtype=float)  
+                keys = np.array(list(cell_response_map.keys()), dtype=int)  
+                vals = np.array(list(cell_response_map.values()), dtype=float)  
                 rows = keys[:, 0]
                 cols = keys[:, 1]
 
@@ -448,7 +448,7 @@ class BipolarImageProcessor:
             rec_fields = {cell: pixels for cell, pixels in self._receptive_field_map.items() 
                                 if self.mosaic.grid[cell] == subtype_index}
             # get the map that has mosaic cell: average color
-            avg_color_map = self.avg_colors_cell_map
+            avg_color_map = self.cell_response_map
 
             # now create pixel:avg_color(s) dict 
             # defaultdict wont return an error but will create a new empty list if the key is not found already for a given pixel

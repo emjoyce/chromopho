@@ -1,10 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from .utils import img_to_rgb, _parse_cone_string, gaussian_blur_reflect_mask
-from .plot import bipolar_image_filter
-import concurrent.futures
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from .utils import _parse_cone_string, sample_surround_center_ratio_binned
 
 
 # tf based functions
@@ -94,9 +90,9 @@ def _gaussian_blur_tf(x, sigma, truncate=4.0):
 
 def gaussian_blur_reflect_mask_tf(arr, sigma):
     """
-    Differentiable masked Gaussian blur.
-    Uses normalized convolution to avoid invalid cells contributing.
-    Invalid entries remain -1 in the output.
+    Differentiable masked Gaussian blur
+    Uses normalized convolution to avoid invalid cells contributing
+    Invalid entries stay -1 in the output
     """
     arr = tf.convert_to_tensor(arr)
     valid = tf.math.is_finite(arr) & (arr >= 0)
@@ -121,28 +117,13 @@ def ste_clip(x, min, max):
     return x + tf.stop_gradient(y - x)
 
 
-def bipolar_image_filter_tf(
-    rgb_image,
-    center_cones,
-    surround_cones,
-    center_sigma=1.0,
-    surround_sigma=3.0,
-    cone_center_sigma=1,
-    alpha_center=1.0,
-    alpha_surround=1.0,
-    apply_rectification=True,
-    on_k=0.7,
-    on_n=2.0,
-    off_k=0.7,
-    off_n=1.5,
-    nonlin_adapt_cones=True,
-    sigma_adapt=4.0,
-    rgb_to_lms=np.array([
-        [0.313, 0.639, 0.048],
-        [0.155, 0.757, 0.088],
-        [0.017, 0.109, 0.874],
-    ]),
-):
+def bipolar_image_filter_tf(rgb_image, center_cones, surround_cones, family,
+    center_sigma=1.0, surround_sigma=3.0, alpha_center=1.0, alpha_surround=1.0,
+    apply_rectification=True, on_k=0.7, on_n=2.0, off_k=0.7, off_n=1.5,
+    nonlin_adapt_cones=True, sigma_adapt=4.0,
+    rgb_to_lms=np.array([[0.313, 0.639, 0.048],
+                         [0.155, 0.757, 0.088],
+                         [0.017, 0.109, 0.874]])):
     """
     TensorFlow version of bipolar_image_filter with differentiable ops.
     Returns a grayscale image of bipolar cell response.
@@ -175,8 +156,7 @@ def bipolar_image_filter_tf(
         lam=np.array([0.2, 0.2, 0.2], dtype=np.float32),
         gamma=np.array([1.2, 1.2, 1.2], dtype=np.float32),
         sigma=np.array([0.25, 0.25, 0.25], dtype=np.float32),
-        sigma_adapt=4.0,
-    ):
+        sigma_adapt=4.0):
         lam_tf = tf.constant(lam, dtype=lms.dtype)
         gamma_tf = tf.constant(gamma, dtype=lms.dtype)
         sigma_tf = tf.constant(sigma, dtype=lms.dtype)
@@ -191,9 +171,7 @@ def bipolar_image_filter_tf(
         gain = tf.reshape(sigma_tf, [1, 1, 3])
         lms_nonlin_adapt = ste_clip(
             lms_nonlin / (gain + adaptation_signal + tf.cast(1e-12, lms.dtype)),
-            0.0,
-            1.0,
-        )
+            0.0, 1.0)
         return lms_nonlin_adapt
 
     if nonlin_adapt_cones:
@@ -232,11 +210,7 @@ def bipolar_image_filter_tf(
     abs_min = min(alpha_center * pol_center, alpha_surround * pol_surround)
     abs_max = max(alpha_center * pol_center, alpha_surround * pol_surround)
 
-    output_normalized = ste_clip(
-        (output - abs_min) / (abs_max - abs_min),
-        0.0,
-        1.0,
-    )
+    output_normalized = ste_clip((output - abs_min) / (abs_max - abs_min), 0.0, 1.0)
 
     if not apply_rectification:
         return output_normalized
@@ -263,10 +237,6 @@ def bipolar_image_filter_tf(
         output_rectified = off_rectifier_nr_high(output_normalized, off_k, off_n)
 
     return output_rectified
-
-
-
-
 
 
 
@@ -302,11 +272,12 @@ class BipolarImageProcessorTF:
         self.amacrine_sigma_blur = amacrine_sigma_blur
 
         # flag that controls whether full receptive fields are stored (vs just centers)
-        # in this tf version we default to True so downstream code can use the mapping
+        # used to use in old code
+        # in tf version, default to True
         self.build_receptive_fields = True
 
         self._fit_image_and_mosaic(return_minimum_rf)
-        self.get_all_average_colors(method = method, blur_sigma=self.amacrine_sigma_blur)
+        self.get_all_cell_responses(method = method, blur_sigma=self.amacrine_sigma_blur)
 
         self.avg_subtype_response_per_pixel = {}
         self.get_avg_color_map_per_pixel()
@@ -346,9 +317,7 @@ class BipolarImageProcessorTF:
         new_h, new_w = image.shape[:2]
         if (old_h, old_w) != (new_h, new_w):
             raise ValueError(
-                f"New image shape {image.shape[:2]} does not match original {self.image.shape[:2]}, new mapping failed"
-            )
-            return
+                f"New image shape {image.shape[:2]} does not match original {self.image.shape[:2]}, new mapping failed")
 
         # update state for the new image
         self.image = image
@@ -362,7 +331,7 @@ class BipolarImageProcessorTF:
         blur_sigma = self.amacrine_sigma_blur if amacrine_sigma_blur is None else amacrine_sigma_blur
 
         # recompute per-cell outputs and optional flattened grid
-        self.get_all_average_colors(method=method, blur_sigma=blur_sigma)
+        self.get_all_cell_responses(method=method, blur_sigma=blur_sigma)
 
         # optionally recompute per-pixel subtype average response maps (default is False)
         if recompute_pixel_map:
@@ -463,52 +432,6 @@ class BipolarImageProcessorTF:
         self._center_coords = np.stack([np.array(center_rows), np.array(center_cols)], axis = 1).astype(int)
 
 
-
-
-
-
-
-
-
-
-        #     # TODO: using a list is slow, refactor 
-        #     available_pixel_inds = [(i,j) for i in range(img_cutout_i_range[0], img_cutout_i_range[1]) for j in range(img_cutout_j_range[0], img_cutout_j_range[1])]
-        #     # chop these available_pixel_inds 
-        #     for i in range(mosaic_height):
-        #         for j in range(mosaic_width):
-        #             # if this i,j location does not have a cell in the mosaic, skip
-        #             # the square of pixels will be square_dim x square_dim per i,j element in the mosaic
-        #             # as we iterate through the row via i, we need to keep track of the pixels that have already been assigned via available_pixel_inds
-        #             # get the first dim pixels in available_pixel_inds
-        #             # first get j indices of the first square_dim pixels 
-        #             js = np.array(available_pixel_inds[:square_dim])[:,1]
-        #             j_inds = [j for j in js if j >= 0 and j < img_width]
-        #             # iterate through the first square_dim i indices and assign the i,j pairs and remove them from available_pixel_inds
-        #             # first i ind starts at first i in available_pixel_inds
-        #             first_i = available_pixel_inds[0][0]
-        #             i_inds = list(range(first_i, min(first_i+square_dim, img_height)))
-        #             rec_field = [(ii,jj) for ii in i_inds for jj in j_inds]
-
-        #             # now get the diagonal 'radius' of cube 
-                    
-        #             # remove the pixels that have been assigned
-        #             [available_pixel_inds.remove(rec_field[i]) for i in range(len(rec_field))]
-        #             # if there is not a cell in the mosaic here, dont add anythign to the mapping, but still needed to remove first 
-        #             # TODO: is this is also innefficient to do this after all this computation^ 
-        #             if self.mosaic.grid[i,j] == -1:
-        #                 continue # without adding anything to the mapping
-        #             # now have to 'circleify' the square of pixels
-        #             if not return_minimum:
-        #                 rec_field = self._square_to_circle_pixels(rec_field, i, j)
-                    
-        #             mapping[(i, j)] = rec_field
-
-
-
-        # else: # TODO: do this ^ but for fit_image
-        #     raise ValueError('functionality for fit_image not yet implemented :.(')
-        # self._receptive_field_map = mapping
-
     def _square_to_circle_pixels(self, square_pixels, i, j):
         """
         Given a list of (row, col) pixel indices that form a square,
@@ -597,20 +520,14 @@ class BipolarImageProcessorTF:
             # generate the image seen by the subtype
             # computes more of the cone info coming in 
             # s-on would compute 
-            bipolar_image_seen = bipolar_image_filter_tf(
-                        rgb_image = self.image_tf,
-                        center_cones = color_filter_dict['center'],
-                        surround_cones = color_filter_dict['surround'],
-                        center_sigma = rf_params['center_sigma'],
-                        surround_sigma = rf_params['surround_sigma'],
-                        alpha_center = rf_params['alpha_center'],
-                        alpha_surround = rf_params['alpha_surround'],
-                        apply_rectification=rf_params['apply_rectification'], 
-                        on_k=rf_params['on_k'], 
-                        on_n=rf_params['on_n'], 
-                        off_n=rf_params['off_n'],
-                        off_k=rf_params['off_k'],
-                        rgb_to_lms = rgb_to_lms,)
+            bipolar_image_seen = bipolar_image_filter_tf(rgb_image = self.image_tf,
+                        center_cones = color_filter_dict['center'], surround_cones = color_filter_dict['surround'],
+                        family = color_filter_dict['family'],
+                        center_sigma = rf_params['center_sigma'], surround_sigma = rf_params['surround_sigma'],
+                        alpha_center = rf_params['alpha_center'], alpha_surround = rf_params['alpha_surround'],
+                        apply_rectification=rf_params['apply_rectification'], on_k=rf_params['on_k'], 
+                        on_n=rf_params['on_n'], off_n=rf_params['off_n'], off_k=rf_params['off_k'],
+                        rgb_to_lms = rgb_to_lms)
                 # so the image should output a single value dependign on subtype, which if s+, would be the output of l cones minue the output of m+l
 
             self.bipolar_images[subtype.name] = bipolar_image_seen
@@ -645,7 +562,7 @@ class BipolarImageProcessorTF:
         return tf.stack(images, axis=0)
     
     # TODO: should rename this to something like get_all_cell_responses
-    def get_all_average_colors(self, method = 'grayscale', blur_sigma=None):
+    def get_all_cell_responses(self, method = 'grayscale', blur_sigma=None):
         """
         Returns the output of each bipolar cell in the mosaic.
         If stimulation mosaic is provided, bipass normal color filter stuff and set each cell's
@@ -695,7 +612,7 @@ class BipolarImageProcessorTF:
 
         # save as a 1D tensor of outputs for valid cells; no dict in tf version
         self.cell_outputs = cell_outputs
-        self.avg_colors_cell_map = None
+        self.cell_response_map = None
 
         # now scatter the cell outputs back onto the mosaic grid, -1 for empty cells
         h, w = self.mosaic.grid.shape
@@ -706,32 +623,32 @@ class BipolarImageProcessorTF:
             grid_outputs = gaussian_blur_reflect_mask_tf(grid_outputs, sigma = blur_sigma)
         self.grid_outputs = grid_outputs
 
-    def get_avg_colors_cell_map_numpy(self):
+    def get_cell_response_map_numpy(self):
         """
         Returns a numpy-backed dict that maps each valid mosaic cell (i,j) to its
         bipolar output value 
 
-        Requires get_all_average_colors to have been called first so that
+        Requires get_all_cell_responses to have been called first so that
         self.cell_outputs has been populated.
         """
         # if we have already built this dict, just return it
-        if self.avg_colors_cell_map is not None:
-            return self.avg_colors_cell_map
+        if self.cell_response_map is not None:
+            return self.cell_response_map
 
         # need the per-cell outputs in a TF tensor to convert to numpy
         if not hasattr(self, 'cell_outputs'):
-            raise ValueError('cell_outputs not computed; call get_all_average_colors first.')
+            raise ValueError('cell_outputs not computed; call get_all_cell_responses first.')
 
-        avg_colors_cell_map = {}
+        cell_response_map = {}
         valid_coords = self._valid_cell_coords
         cell_outputs_np = self.cell_outputs.numpy()
 
         # zip through valid cell coords and their outputs and build a plain dict
         for coord, val in zip(valid_coords, cell_outputs_np):
-            avg_colors_cell_map[(int(coord[0]), int(coord[1]))] = val
+            cell_response_map[(int(coord[0]), int(coord[1]))] = val
 
-        self.avg_colors_cell_map = avg_colors_cell_map
-        return avg_colors_cell_map
+        self.cell_response_map = cell_response_map
+        return cell_response_map
 
     def get_avg_color_map_per_pixel(self):
         """
@@ -746,7 +663,7 @@ class BipolarImageProcessorTF:
             raise ValueError('Receptive field map not built. Set build_receptive_fields=True.')
 
         # get (i,j) -> cell output as a numpy dict
-        avg_color_map = self.get_avg_colors_cell_map_numpy()
+        avg_color_map = self.get_cell_response_map_numpy()
 
         for subtype in self.mosaic.subtypes:
             subtype_index = self.mosaic.subtype_index_dict[subtype.name]
