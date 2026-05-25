@@ -119,7 +119,7 @@ def ste_clip(x, min, max):
 
 def bipolar_image_filter_tf(rgb_image, center_cones, surround_cones, family,
     center_sigma=1.0, surround_sigma=3.0, alpha_center=1.0, alpha_surround=1.0,
-    apply_rectification=True, on_k=0.7, on_n=2.0, off_k=0.7, off_n=1.5,
+    apply_rectification=True, on_k=0.5, on_n=2.5, off_k=0.5, off_n=4.0,
     nonlin_adapt_cones=True, sigma_adapt=4.0,
     rgb_to_lms=np.array([[0.313, 0.639, 0.048],
                          [0.155, 0.757, 0.088],
@@ -215,26 +215,14 @@ def bipolar_image_filter_tf(rgb_image, center_cones, surround_cones, family,
     if not apply_rectification:
         return output_normalized
 
-    def _nr_base(x, k, n):
+    def hill_normalized(x, K=0.5, n=2.5):
         x = ste_clip(x, 0.0, 1.0)
-        k = max(float(k), 1e-12)
-        n = float(n)
-        xn = tf.pow(x, n)
-        kn = k**n
-        return xn / (xn + kn + 1e-12)
-
-    def on_rectifier_nr(x, k, n):
-        s = 1.0 + k**n
-        return ste_clip(s * _nr_base(x, k, n), 0.0, 1.0)
-
-    def off_rectifier_nr_high(x, k, n):
-        s = 1.0 + k**n
-        return ste_clip(1.0 - s * _nr_base(1.0 - x, k, n), 0.0, 1.0)
+        return ((1 + K**n) * x**n) / (K**n + x**n)
 
     if pol_center > 0:
-        output_rectified = on_rectifier_nr(output_normalized, on_k, on_n)
+        output_rectified = hill_normalized(output_normalized, K=on_k, n=on_n)
     else:
-        output_rectified = off_rectifier_nr_high(output_normalized, off_k, off_n)
+        output_rectified = hill_normalized(output_normalized, K=off_k, n=off_n)
 
     return output_rectified
 
@@ -523,7 +511,6 @@ class BipolarImageProcessorTF:
             bipolar_image_seen = bipolar_image_filter_tf(rgb_image = self.image_tf,
                         center_cones = color_filter_dict['center'], surround_cones = color_filter_dict['surround'],
                         family = color_filter_dict['family'],
-                        center_sigma = rf_params['center_sigma'], surround_sigma = rf_params['surround_sigma'],
                         alpha_center = rf_params['alpha_center'], alpha_surround = rf_params['alpha_surround'],
                         apply_rectification=rf_params['apply_rectification'], on_k=rf_params['on_k'], 
                         on_n=rf_params['on_n'], off_n=rf_params['off_n'], off_k=rf_params['off_k'],
@@ -549,6 +536,7 @@ class BipolarImageProcessorTF:
         bipolar_image_seen = self._compute_subtype_image(subtype, method = method)
         
         # now get the output of the pixel at the center of the receptive field
+        center_pos = self._cell_centers[(i, j)]
         center_idx = tf.constant([center_pos[0], center_pos[1]], dtype=tf.int32)
         return tf.gather_nd(bipolar_image_seen, center_idx[tf.newaxis, :])[0]
 

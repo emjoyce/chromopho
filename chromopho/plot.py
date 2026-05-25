@@ -164,9 +164,9 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     alpha_surround=1.0,
     apply_rectification = True,
     on_k=0.7,
-    on_n=2.0,
+    on_n=2.5,
     off_k=0.7,
-    off_n=1.5,  
+    off_n=4.0,
     nonlin_adapt_cones = True,
     sigma_adapt = 4.0,
     rgb_to_lms = np.array([
@@ -260,27 +260,18 @@ def bipolar_image_filter(rgb_image, center_cones, surround_cones,
     if not apply_rectification:
         return output_normalized
 
-    # Naka–Rushton rectifiers without sign flip (bc sign is already considered) and with dif params for on and off
-    def _nr_base(x, k, n):
+    def hill_normalized(x, K=0.5, n=2.5):
         x = np.clip(x, 0.0, 1.0)
-        k = max(float(k), 1e-12); n = float(n)
-        xn = np.power(x, n); kn = np.power(k, n)
-        return xn / (xn + kn + 1e-12)
-
-    def on_rectifier_nr(x, k, n):
-        # low-end compression, output [0,1]
-        s = 1.0 + k**n
-        return np.clip(s * _nr_base(x, k, n), 0.0, 1.0)
-
-    def off_rectifier_nr_high(x, k, n):
-        # high-end compression, output [0,1]
-        s = 1.0 + k**n
-        return np.clip(1.0 - s * _nr_base(1.0 - x, k, n), 0.0, 1.0)
+        K = max(float(K), 1e-12)
+        n = float(n)
+        xn = np.power(x, n)
+        Kn = np.power(K, n)
+        return np.clip(((1.0 + Kn) * xn) / (Kn + xn + 1e-12), 0.0, 1.0)
 
     if pol_center > 0:
-        output_rectified = on_rectifier_nr(output_normalized, on_k, on_n)
+        output_rectified = hill_normalized(output_normalized, K=on_k, n=on_n)
     else:
-        output_rectified = off_rectifier_nr_high(output_normalized, off_k, off_n)
+        output_rectified = hill_normalized(output_normalized, K=off_k, n=off_n)
     
     return output_rectified
 
