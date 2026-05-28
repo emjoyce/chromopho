@@ -627,7 +627,8 @@ def local_phosphene_multi(
     in_place: bool = False,
     return_cells: bool = False,
     amacrine_blur: bool = False,          
-    amacrine_blur_kwargs: dict = None     
+    amacrine_blur_kwargs: dict = None,
+    return_subtype_counts = False     
 ):
     """
     Multi-electrode version of local_phosphene:
@@ -705,14 +706,15 @@ def local_phosphene_multi(
 
     counts_by_name = {}
     changed = 0
-    if return_cells:
+    if return_cells or return_subtype_counts:
         inside_allowed = inside & allowed
         for name, code in subtype_dict.items():
             if code == invalid_code:
                 continue
             counts_by_name[name] = int(np.count_nonzero(inside_allowed & (mosaic_grid == code)))
 
-        print("Cells under (union) electrodes by subtype:", counts_by_name)
+        if return_subtype_counts:
+            print("Cells under (union) electrodes by subtype:", counts_by_name)
         changed = sum(counts_by_name.values())
 
     for code, target in code_to_val.items():
@@ -752,10 +754,12 @@ def local_phosphene_multi(
         out = amacrine_crossover_minimal(out, mosaic_grid, subtype_dict, **amacrine_blur_kwargs)
 
 
-    if return_cells:
+    if return_cells or return_subtype_counts:
         total_changed = np.count_nonzero(np.abs(out - before) > 1e-12)
         print(f"Cells under (union) electrodes: {changed}")
         print(f"Cells affected: {total_changed}")
+        if return_subtype_counts:
+            return out, counts_by_name, changed, total_changed
         return out, changed, total_changed
 
     return out
