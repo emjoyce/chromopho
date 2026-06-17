@@ -559,14 +559,19 @@ def local_phosphene(
 
 def _place_implant(r, d, mosaic): 
     '''
-    returns a list of flat-top hexagon implant center 
-    r: radius of hexagon measured 
-    from center of hex to corner d: distance between flat edges of hex
+    take argument of radius (r) of phosphene, mosaic
+        ,distance (d) between flat edges of hex
+        ,and mosaic
+    
+    returns a list of flat-top hexagon implant center location ([x,y])
+            ,and a list of center cube coordinate location ([q, r, s])
+    
     '''
+    
     # first: find the center point of mosaic: (m/2, m/2) 
     # to do that, we need m (and n if they are not the same)
-    m = mosaic.grid.shape[0] 
-    n = mosaic.grid.shape[1] 
+    m = mosaic.grid.shape[0] # 178
+    n = mosaic.grid.shape[1] # 178
 
     # what if m and or n are odd numbers? 
     # we need coordinates to be whole numbers 
@@ -581,8 +586,9 @@ def _place_implant(r, d, mosaic):
     h_step = 3/2 * r * g 
     v_step = np.sqrt(3) * r * g 
 
-    # initialize an array to store a list of location of centers 
+    # initialize an array to store a list of location of centers and to store q, r, s coordination
     centers = []
+    centers_cube_coor = []
 
     # calculate number of hexagon we can place in the given region 
     numCol = int(m/(2*r))
@@ -590,23 +596,21 @@ def _place_implant(r, d, mosaic):
     print(numCol, numRow)
 
     # calculate the actual location at the center of the hexagon depends on the i(column index), j(row index)
-    for i in range (-numCol, numCol): 
-        # print(i)
-        for j in range (-numRow, numRow):
-            # print(j)
-            x = center_point[0] + h_step * j
-            y = center_point[1] + v_step * (i+(j/2))
+    for q in range (-numCol, numCol): 
+        for r in range (-numRow, numRow):
+            x = center_point[0] + h_step * q
+            y = center_point[1] + v_step * (r+(q/2))
 
             if 0 <= x < m-1 and 0 <= y < n-1:
             
                 if mosaic.grid[int(np.round(x)),int(np.round(y))]!=-1:
                     centers.append((x,y))
-
-    # Circle cutoff arr.pop(index) del arr[index]
-    # arr = [() for x in arr of x ]
-    # centers = centers[mosaic.grid != -1]
+                    # convert s coordinate (cube system)
+                    s = (-q)-r
+                    # store coordination to array 
+                    centers_cube_coor.append((q,r,s))
             
-    return np.array(centers)
+    return np.array(centers), np.array(centers_cube_coor)
 
 
 
