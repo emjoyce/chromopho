@@ -276,3 +276,72 @@ def predict_img(mosaic_output, model, mosaic, amacrine_blur = False, amacrine_si
     pred = model.predict(arr)
     
     return pred
+
+
+
+
+def pair_from_npy_path(npy_path: str, image_dir: str) -> str:
+    base = os.path.basename(npy_path)
+    stem = base[:-len("_mosaic_output.npy")] if base.endswith("_mosaic_output.npy") else os.path.splitext(base)[0]
+    return os.path.join(image_dir, f"{stem}.png")
+
+def compute_fit_mosaic_crop(img_h, img_w, mosaic_h=178, mosaic_w=178):
+    # replicate your fit_mosaic center crop
+    square_dim = min(img_h // mosaic_h, img_w // mosaic_w)
+    if square_dim < 1:
+        raise ValueError("Image too small for mosaic.")
+    cut_h = square_dim * mosaic_h
+    cut_w = square_dim * mosaic_w
+    top  = (img_h - cut_h) // 2
+    left = (img_w - cut_w) // 2
+    return (left, top, left + cut_w, top + cut_h)  # PIL (L,T,R,B)
+
+import glob 
+from PIL import Image
+from torch.utils.data import Dataset
+
+class MosaicLocalDatasetCircle(Dataset):
+    def __init__(self, mosaic, N_cells, idx_map, mosaic_dir: str, image_dir: str, out_hw: Tuple[int,int], valid_lin_idx: np.ndarray):
+        self.paths = []
+        for p in sorted(glob.glob(os.path.join(mosaic_dir, "*_mosaic_output.npy"))):
+            if os.path.isfile(pair_from_npy_path(p, image_dir)):
+                self.paths.append(p)
+        if not self.paths:
+            raise RuntimeError("No (mosaic,image) pairs found.")
+        self.Ht, self.Wt = out_hw
+        self.valid_lin = valid_lin_idx.astype(np.int64)
+        self.mosaic = mosaic
+        self.N_cells = N_cells
+        self.idx_map = idx_map
+        self.image_dir = image_dir
+        print(f"Found {len(self.paths)} pairs. Circle pixels: {self.valid_lin.size}")
+
+    def __len__(self): return len(self.paths)
+
+    def __getitem__(self, idx):
+        npy_path = self.paths[idx]
+        img_path = pair_from_npy_path(npy_path, self.image_dir)
+
+        arr = np.load(npy_path).astype(np.float32)       # (178,178)
+        arr = amacrine_crossover_minimal(arr, self.mosaic.grid, self.mosaic.subtype_index_dict, sigma =2, beta = .15, 
+                                               same_polarity_unsharp=False)
+        
+        vals = arr.copy(); vals[vals < 0] = 0.0
+        flat_in = np.zeros((self.N_cells,), dtype=np.float32)
+        ys, xs = np.where(self.idx_map >= 0)
+        flat_in[self.idx_map[ys, xs]] = vals[ys, xs]          # (N_cells,)
+
+        # 100x100 img ->  only center circle pixels 
+        with Image.open(img_path) as im:
+            im = im.convert("RGB")
+            L, T, R, B = compute_fit_mosaic_crop(im.height, im.width,
+                                                 mosaic_h=arr.shape[0], mosaic_w=arr.shape[1])
+            im = im.crop((L, T, R, B))                               # same FOV the mosaic used
+            im = im.resize((self.Wt, self.Ht), Image.BILINEAR)       # 100x100
+            tgt = np.asarray(im, dtype=np.float32) / 255.0
+
+        # channel-first, then take only valid pixels and flatten RGB-major
+        tgt_cf = np.transpose(tgt, (2,0,1)).reshape(3, -1)      # (3, 10000)
+        tgt_circle = tgt_cf[:, self.valid_lin].reshape(-1)       # (3*N_out_pix,)
+
+        return torch.from_numpy(flat_in), torch.from_numpy(tgt_circle), os.path.basename(img_path)

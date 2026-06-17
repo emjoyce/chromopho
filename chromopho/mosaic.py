@@ -3,6 +3,7 @@ from matplotlib.colors import ListedColormap
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import cKDTree
 import matplotlib.pyplot as plt
+from .utils import make_surround_center_bins
 
 
 
@@ -22,7 +23,8 @@ class BipolarSubtype:
                     or custom (lambda) function for calculating the size of the receptive field scaling metric that outputs same units as described above
         rf_params (dict): a dictionary of parameters for the receptive field of the subtype
             i.e. center_sigma (1 by default), surround_sigma (3.0 default), alpha_center (1.0 default),
-                alpha_surround (0.8 default) eccentricity, etc. # TODO: maybe delete this and make them all args? do something with eccentricity so can model the whole 
+                alpha_surround (None by default) or family ('midget' / 'diffuse') for surround alpha sampling,
+                eccentricity, etc. # TODO: maybe delete this and make them all args? do something with eccentricity so can model the whole 
                                                 retina or fovea+
         color_filter_params (dict): for bipolar cells, dict with 'center' and 'surround' keys, each with the naem of the cone type(s) that the center and surround 
             of the receptive field are sensitive to, '+l', '-l', '+m', '-m', '+ls', '-ls'
@@ -40,9 +42,10 @@ class BipolarSubtype:
 
         self.color_filter_params = color_filter_params
         _defaults = {
-            'family': 'diffuse',
+            'family': None,
+            'surround_alpha_n_bins': 5,
             'alpha_center': 1.0,
-            'alpha_surround': 0.8,
+            'alpha_surround': None,
             'apply_rectification': True,
             'on_k': 0.7,
             'on_n': 2.5,
@@ -50,10 +53,46 @@ class BipolarSubtype:
             'off_n': 4.0
         }
 
-        params = rf_params or {}
-
+        # copy so we do not mutate whatever dict was passed in from a script
+        params = dict(rf_params or {})
         for key, val in _defaults.items():
             params.setdefault(key, val)
+
+        # store the surround alpha setup on the subtype itself.
+        # if family is passed in, alpha_surround should become the full set of
+        # possible surround alpha values for that family, and
+        # alpha_surround_probs should hold the matching sampling weights.
+        # if no family is passed in, we expect one scalar alpha_surround and
+        # store that as a length-1 array with probability 1.
+        self.family = params['family']
+
+        if self.family is not None:
+            self.alpha_surround, self.alpha_surround_probs = make_surround_center_bins(
+                self.family,
+                n_bins=params['surround_alpha_n_bins'],
+            )
+        elif params['alpha_surround'] is not None:
+            self.alpha_surround = np.array([params['alpha_surround']], dtype=float)
+            self.alpha_surround_probs = np.array([1.0], dtype=float)
+        else:
+            raise ValueError(
+                f"Subtype '{self.name}' must define either family or alpha_surround in rf_params"
+            )
+
+        # keep aliases with the more explicit names too.
+        # these are useful when we want to be very explicit that the subtype is
+        # carrying a bank of possible surround alpha values instead of one
+        # scalar value.
+        self.surround_alpha_values = self.alpha_surround
+        self.surround_alpha_probs = self.alpha_surround_probs
+
+        # the current tf processor path still needs one scalar surround alpha
+        # until the per-cell weighted sampling step is finished.
+        # keep that scalar on a separate attribute so alpha_surround itself can
+        # stay as the full value bank.
+        self.alpha_surround_mean = float(np.sum(
+            self.alpha_surround * self.alpha_surround_probs
+        ))
 
         self.rf_params = params
         
@@ -116,6 +155,12 @@ class BipolarMosaic:
             if density_swap:
                 print('density swap')
                 self.grid = self._density_swap()
+
+        # once the grid is fully defined, assign each valid cell one surround
+        # alpha bank index based on that cell's subtype. these assignments are
+        # part of the mosaic itself, and can then be reused by any processor
+        # built from this mosaic.
+        self._assign_surround_alpha_bins_to_cells()
         self._generate_receptive_field_matrix()
         
 
@@ -152,6 +197,82 @@ class BipolarMosaic:
                     grid[i, j] = 0 
                     cell_count += 1
         return grid
+
+    def _assign_surround_alpha_bins_to_cells(self):
+        """
+        assigns one surround alpha bank index to each valid cell in the mosaic
+
+        stores the bank index, the actual surround alpha value, and the cell's
+        surround alpha family both as flat arrays aligned with valid_cell_coords
+        and as full mosaic-shaped grids with -1 / '' in invalid cells.
+
+        grid_surround_alphas is the simple mosaic-shaped float grid version of
+        the sampled surround alpha values. for the default large circular
+        mosaic, this is the full original circle grid shape.
+        """
+        # get the valid cell coords once from the final mosaic grid.
+        # these are the coords we will align all per-cell surround alpha arrays to.
+        valid_cell_coords = np.argwhere(self.grid != -1).astype(int)
+        cell_subtype_indices = self.grid[valid_cell_coords[:, 0], valid_cell_coords[:, 1]]
+
+        n_valid_cells = valid_cell_coords.shape[0]
+        cell_surround_alpha_bank_indices = np.full(n_valid_cells, -1, dtype=np.int32)
+        cell_surround_alpha_values = np.full(n_valid_cells, -1.0, dtype=float)
+        cell_surround_alpha_families = np.full(n_valid_cells, '', dtype=object)
+
+        # sample surround alpha bins one subtype at a time.
+        # this keeps the code vectorized over all cells of a subtype instead of
+        # looping through cells one-by-one.
+        for subtype in self.subtypes:
+            subtype_index = self.subtype_index_dict[subtype.name]
+            subtype_mask = (cell_subtype_indices == subtype_index)
+            n_subtype_cells = int(np.sum(subtype_mask))
+            if n_subtype_cells == 0:
+                continue
+
+            subtype_alpha_bank = np.asarray(subtype.alpha_surround, dtype=float)
+            subtype_alpha_probs = np.asarray(subtype.alpha_surround_probs, dtype=float)
+            subtype_bank_indices = np.arange(subtype_alpha_bank.shape[0], dtype=np.int32)
+
+            sampled_bank_indices = np.random.choice(
+                subtype_bank_indices,
+                size=n_subtype_cells,
+                replace=True,
+                p=subtype_alpha_probs,
+            )
+
+            cell_surround_alpha_bank_indices[subtype_mask] = sampled_bank_indices
+            cell_surround_alpha_values[subtype_mask] = subtype_alpha_bank[sampled_bank_indices]
+            cell_surround_alpha_families[subtype_mask] = (
+                subtype.family if subtype.family is not None else 'scalar'
+            )
+
+        # store the per-cell surround alpha assignments aligned with
+        # valid_cell_coords. any processor that builds its valid coords from the
+        # same mosaic mask can reuse these directly.
+        self.valid_cell_coords = valid_cell_coords
+        self.cell_surround_alpha_bank_indices = cell_surround_alpha_bank_indices
+        self.cell_surround_alpha_values = cell_surround_alpha_values
+        self.cell_surround_alpha_families = cell_surround_alpha_families
+
+        # also scatter the assignments back onto full mosaic-shaped grids.
+        # this makes direct lookup by i,j easy when needed.
+        h, w = self.grid.shape
+        self.surround_alpha_bank_index_grid = np.full((h, w), -1, dtype=np.int32)
+
+        # keep the actual sampled surround alpha values in a mosaic-shaped
+        # float grid too. this is the same simple scatter logic as grid_outputs
+        # in the tf processor, but it lives on the mosaic and is built once.
+        self.grid_surround_alphas = np.full((h, w), -1.0, dtype=float)
+
+        # keep the older explicit attribute name as an alias to the same grid
+        # so existing code can keep working.
+        self.surround_alpha_value_grid = self.grid_surround_alphas
+        self.surround_alpha_family_grid = np.full((h, w), '', dtype=object)
+
+        self.surround_alpha_bank_index_grid[valid_cell_coords[:, 0], valid_cell_coords[:, 1]] = cell_surround_alpha_bank_indices
+        self.grid_surround_alphas[valid_cell_coords[:, 0], valid_cell_coords[:, 1]] = cell_surround_alpha_values
+        self.surround_alpha_family_grid[valid_cell_coords[:, 0], valid_cell_coords[:, 1]] = cell_surround_alpha_families
     
     def _apply_tiling(self):
         """

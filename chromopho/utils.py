@@ -350,7 +350,7 @@ def make_surround_center_bins(cell_type,n_bins=5,
 
     bin_values = np.array(bin_values)
     # round down to nearest .1
-    bin_values = np.floor(bin_values * 10) / 10
+    bin_values = np.round(bin_values * 10) / 10
     bin_probs = np.array(bin_probs)
     bin_probs = bin_probs / bin_probs.sum()
 

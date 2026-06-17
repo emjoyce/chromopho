@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from .utils import _parse_cone_string, sample_surround_center_ratio_binned
+from .utils import _parse_cone_string, make_surround_center_bins
 
 
 # tf based functions
@@ -117,16 +117,37 @@ def ste_clip(x, min, max):
     return x + tf.stop_gradient(y - x)
 
 
+def _prepare_surround_alpha_values(alpha_surround, family, surround_alpha_n_bins):
+    """
+    returns the surround alpha values as a flat numpy array.
+
+    if alpha_surround is omitted, this pulls the discrete bin values for the
+    requested cell family. that is the step that lets the tf filter emit the
+    full stack of surround-alpha variants.
+    """
+    if alpha_surround is None:
+        alpha_surround, _ = make_surround_center_bins(family, n_bins=surround_alpha_n_bins)
+
+    alpha_surround = np.asarray(alpha_surround, dtype=float).reshape(-1)
+    if alpha_surround.size == 0:
+        raise ValueError("alpha_surround must contain at least one value")
+    return alpha_surround
+
+
 def bipolar_image_filter_tf(rgb_image, center_cones, surround_cones, family,
-    center_sigma=1.0, surround_sigma=3.0, alpha_center=1.0, alpha_surround=1.0,
+    center_sigma=1.0, surround_sigma=3.0, alpha_center=1.0, alpha_surround=None,
     apply_rectification=True, on_k=0.5, on_n=2.5, off_k=0.5, off_n=4.0,
     nonlin_adapt_cones=True, sigma_adapt=4.0,
+    surround_alpha_n_bins=5,
     rgb_to_lms=np.array([[0.313, 0.639, 0.048],
                          [0.155, 0.757, 0.088],
                          [0.017, 0.109, 0.874]])):
     """
     TensorFlow version of bipolar_image_filter with differentiable ops.
     Returns a grayscale image of bipolar cell response.
+
+    if alpha_surround is a scalar, return shape is (H, W).
+    if alpha_surround is a vector, return shape is (n_alpha, H, W).
     """
     rgb_image = tf.convert_to_tensor(rgb_image)
     rgb_image = tf.cast(rgb_image, tf.float64)
@@ -203,17 +224,38 @@ def bipolar_image_filter_tf(rgb_image, center_cones, surround_cones, family,
     # center_blur = _round_to_decimals(center_blur, 12)
     # surround_blur = _round_to_decimals(surround_blur, 12)
 
-    output = alpha_center * center_blur + alpha_surround * surround_blur
+    # allow alpha_surround to be either one value or a whole bank of values.
+    # when we have a bank, we keep the image math identical and just broadcast
+    # the surround term across a new leading axis.
+    alpha_surround_values = _prepare_surround_alpha_values(
+        alpha_surround,
+        family=family,
+        surround_alpha_n_bins=surround_alpha_n_bins,
+    )
+    alpha_surround_tf = tf.convert_to_tensor(alpha_surround_values, dtype=rgb_image.dtype)
+    alpha_center_tf = tf.cast(alpha_center, rgb_image.dtype)
+
+    center_blur = center_blur[tf.newaxis, ...]
+    surround_blur = surround_blur[tf.newaxis, ...]
+    output = alpha_center_tf * center_blur + alpha_surround_tf[:, tf.newaxis, tf.newaxis] * surround_blur
 
     pol_center = np.sign(np.sum([cL, cM, cS]))
     pol_surround = np.sign(np.sum([sL, sM, sS]))
-    abs_min = min(alpha_center * pol_center, alpha_surround * pol_surround)
-    abs_max = max(alpha_center * pol_center, alpha_surround * pol_surround)
+    center_bound = alpha_center_tf * tf.cast(pol_center, rgb_image.dtype)
+    surround_bound = alpha_surround_tf * tf.cast(pol_surround, rgb_image.dtype)
+    abs_min = tf.minimum(center_bound, surround_bound)[:, tf.newaxis, tf.newaxis]
+    abs_max = tf.maximum(center_bound, surround_bound)[:, tf.newaxis, tf.newaxis]
+    norm_den = tf.maximum(abs_max - abs_min, tf.cast(1e-12, rgb_image.dtype))
 
-    output_normalized = ste_clip((output - abs_min) / (abs_max - abs_min), 0.0, 1.0)
+    output_normalized = ste_clip((output - abs_min) / norm_den, 0.0, 1.0)
+
+    # keep the old return shape when there is only one surround alpha.
+    # this avoids breaking the current processor path while we are only adding
+    # the ability for the tf filter itself to return the full stack.
+    return_stack = len(alpha_surround_values) > 1
 
     if not apply_rectification:
-        return output_normalized
+        return output_normalized if return_stack else output_normalized[0]
 
     def hill_normalized(x, K=0.5, n=2.5):
         x = ste_clip(x, 0.0, 1.0)
@@ -224,7 +266,7 @@ def bipolar_image_filter_tf(rgb_image, center_cones, surround_cones, family,
     else:
         output_rectified = hill_normalized(output_normalized, K=off_k, n=off_n)
 
-    return output_rectified
+    return output_rectified if return_stack else output_rectified[0]
 
 
 
@@ -265,6 +307,22 @@ class BipolarImageProcessorTF:
         self.build_receptive_fields = True
 
         self._fit_image_and_mosaic(return_minimum_rf)
+
+        # the mosaic now owns the per-cell surround alpha assignments.
+        # these were sampled once when the mosaic grid was finalized, and are
+        # reused here rather than recomputed inside the image processor.
+        # the valid cell ordering should match because both use np.argwhere on
+        # the same mosaic valid mask.
+        if not np.array_equal(self._valid_cell_coords, self.mosaic.valid_cell_coords):
+            raise ValueError('Mosaic valid cell ordering does not match processor valid cell ordering')
+
+        self.cell_surround_alpha_bank_indices = self.mosaic.cell_surround_alpha_bank_indices
+        self.cell_surround_alpha_values = self.mosaic.cell_surround_alpha_values
+        self.cell_surround_alpha_families = self.mosaic.cell_surround_alpha_families
+        self.surround_alpha_bank_index_grid = self.mosaic.surround_alpha_bank_index_grid
+        self.surround_alpha_value_grid = self.mosaic.surround_alpha_value_grid
+        self.surround_alpha_family_grid = self.mosaic.surround_alpha_family_grid
+
         self.get_all_cell_responses(method = method, blur_sigma=self.amacrine_sigma_blur)
 
         self.avg_subtype_response_per_pixel = {}
@@ -281,6 +339,10 @@ class BipolarImageProcessorTF:
         This keeps the existing mosaic-to-pixel mapping and just recomputes
         bipolar responses for a new image, as long as the image height/width
         matches the original image used to build this processor.
+
+        The per-cell surround alpha bin assignments are also reused here.
+        They are sampled once when the mosaic is built, and are not recomputed
+        each time a new image is processed.
 
         Parameters
         ----------
@@ -319,6 +381,7 @@ class BipolarImageProcessorTF:
         blur_sigma = self.amacrine_sigma_blur if amacrine_sigma_blur is None else amacrine_sigma_blur
 
         # recompute per-cell outputs and optional flattened grid
+        # using the same surround alpha assignments stored on the mosaic
         self.get_all_cell_responses(method=method, blur_sigma=blur_sigma)
 
         # optionally recompute per-pixel subtype average response maps (default is False)
@@ -418,8 +481,6 @@ class BipolarImageProcessorTF:
             center_rows.append(int(cy))
             center_cols.append(int(cx))
         self._center_coords = np.stack([np.array(center_rows), np.array(center_cols)], axis = 1).astype(int)
-
-
     def _square_to_circle_pixels(self, square_pixels, i, j):
         """
         Given a list of (row, col) pixel indices that form a square,
@@ -495,6 +556,9 @@ class BipolarImageProcessorTF:
                             [0.155, 0.757, 0.088], [0.017, 0.109, 0.874]])):
         '''
         computes the ideal image seen by the given subtype
+
+        if the subtype has a surround alpha bank, this returns the whole bank
+        of DoG images with shape (n_alpha, H, W)
         '''
 
         # check if we have already computed this image
@@ -508,12 +572,20 @@ class BipolarImageProcessorTF:
             # generate the image seen by the subtype
             # computes more of the cone info coming in 
             # s-on would compute 
+            # alpha_surround on the subtype is the whole bank of possible
+            # surround alpha values, so this returns the whole bank of DoG
+            # images for that subtype instead of collapsing to one image here.
             bipolar_image_seen = bipolar_image_filter_tf(rgb_image = self.image_tf,
                         center_cones = color_filter_dict['center'], surround_cones = color_filter_dict['surround'],
-                        family = color_filter_dict['family'],
-                        alpha_center = rf_params['alpha_center'], alpha_surround = rf_params['alpha_surround'],
+                        family = subtype.family,
+                        center_sigma = rf_params['center_sigma'],
+                        surround_sigma = rf_params['surround_sigma'],
+                        alpha_center = rf_params['alpha_center'], alpha_surround = subtype.alpha_surround,
                         apply_rectification=rf_params['apply_rectification'], on_k=rf_params['on_k'], 
                         on_n=rf_params['on_n'], off_n=rf_params['off_n'], off_k=rf_params['off_k'],
+                        nonlin_adapt_cones=rf_params.get('nonlin_adapt_cones', True),
+                        sigma_adapt=rf_params.get('sigma_adapt', 4.0),
+                        surround_alpha_n_bins=rf_params.get('surround_alpha_n_bins', 5),
                         rgb_to_lms = rgb_to_lms)
                 # so the image should output a single value dependign on subtype, which if s+, would be the output of l cones minue the output of m+l
 
@@ -534,20 +606,55 @@ class BipolarImageProcessorTF:
         subtype = self.mosaic._index_to_subtype_dict[self.mosaic.grid[i,j]]
         # put the image through the color filter of the subtype
         bipolar_image_seen = self._compute_subtype_image(subtype, method = method)
+        surround_alpha_bank_index = int(self.surround_alpha_bank_index_grid[i, j])
         
-        # now get the output of the pixel at the center of the receptive field
+        # now get the output of the pixel at the center of the receptive field.
+        # if this subtype has a bank of DoG images, pick the bank entry that
+        # was assigned to this particular cell at init time.
         center_pos = self._cell_centers[(i, j)]
-        center_idx = tf.constant([center_pos[0], center_pos[1]], dtype=tf.int32)
+        if bipolar_image_seen.shape.rank == 3:
+            center_idx = tf.constant([surround_alpha_bank_index, center_pos[0], center_pos[1]], dtype=tf.int32)
+        else:
+            center_idx = tf.constant([center_pos[0], center_pos[1]], dtype=tf.int32)
         return tf.gather_nd(bipolar_image_seen, center_idx[tf.newaxis, :])[0]
 
     def _build_subtype_stack(self, method="grayscale"):
         '''
         builds a TensorFlow tensor that stacks all subtype responses images together
+
+        returns shape (n_subtypes, n_alpha, H, W)
         '''
         images = []
+        n_alpha_per_subtype = []
+
         for subtype in self.mosaic.subtypes:
-            images.append(self._compute_subtype_image(subtype, method=method))
-        return tf.stack(images, axis=0)
+            subtype_image = self._compute_subtype_image(subtype, method=method)
+
+            # make sure each subtype image has an explicit alpha-bank axis.
+            # scalar subtypes come back as (H, W), while banked subtypes come
+            # back as (n_alpha, H, W).
+            if subtype_image.shape.rank == 2:
+                subtype_image = subtype_image[tf.newaxis, ...]
+            elif subtype_image.shape.rank != 3:
+                raise ValueError('Subtype image must have rank 2 or 3')
+
+            images.append(subtype_image)
+            n_alpha_per_subtype.append(int(subtype_image.shape[0]))
+
+        max_n_alpha = max(n_alpha_per_subtype)
+        normalized_images = []
+
+        # all subtype banks should either already have the same number of
+        # alpha images, or just have one image that can be repeated.
+        for subtype_image, n_alpha in zip(images, n_alpha_per_subtype):
+            if n_alpha == max_n_alpha:
+                normalized_images.append(subtype_image)
+            elif n_alpha == 1:
+                normalized_images.append(tf.repeat(subtype_image, repeats=max_n_alpha, axis=0))
+            else:
+                raise ValueError('Subtype alpha banks must all have the same length, or length 1')
+
+        return tf.stack(normalized_images, axis=0)
     
     # TODO: should rename this to something like get_all_cell_responses
     def get_all_cell_responses(self, method = 'grayscale', blur_sigma=None):
@@ -571,7 +678,9 @@ class BipolarImageProcessorTF:
             stim = tf.convert_to_tensor(stimulation_mosaic, dtype=tf.float64)
             cell_outputs = tf.gather_nd(stim, valid_coords_tf)
         else:
-            # build a stack of subtype images: one (H x W) resp image per subtype
+            # build a stack of subtype image banks.
+            # shape is (n_subtypes, n_alpha, H, W), so later we can gather
+            # from the correct subtype bank and the correct per-cell alpha bin.
             subtype_stack = self._build_subtype_stack(method = method)
 
             # map from mosaic subtype index -> position along first axis of subtype_stack
@@ -587,10 +696,12 @@ class BipolarImageProcessorTF:
                 dtype = np.int32,
             )
 
-            # gather the center pixel output for each cell from the appropriate subtype image
+            # gather the center pixel output for each cell from the appropriate
+            # subtype bank and the surround alpha bin assigned to that cell.
             indices = tf.stack(
                 [
                     tf.convert_to_tensor(stack_indices, dtype = tf.int32),
+                    tf.convert_to_tensor(self.cell_surround_alpha_bank_indices, dtype = tf.int32),
                     tf.convert_to_tensor(self._center_coords[:, 0], dtype = tf.int32),
                     tf.convert_to_tensor(self._center_coords[:, 1], dtype = tf.int32),
                 ],
